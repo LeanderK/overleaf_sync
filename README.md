@@ -63,6 +63,20 @@ Required cookies
 - At minimum: `overleaf_session2` and `GCLB` must be present in your Cookie header for authenticated requests.
 - document.cookie cannot see HttpOnly cookies; copy the full Cookie header from the Network tab for a request to your Overleaf host.
 
+Qt browser login (optional)
+- Use a built-in Qt browser to log in and auto-capture cookies.
+- Conda (recommended on macOS/Linux):
+```bash
+conda activate overleaf-sync
+conda install -c conda-forge pyside6
+overleaf-sync browser-login-qt
+```
+- Pip/venv alternative:
+```bash
+pip install PySide6
+python -m overleaf_sync.cli browser-login-qt
+```
+
 Git authentication token
 - Overleaf requires a Git auth token for `git clone`/`git pull`.
 - Generate a token in your Overleaf account (see the Git integration/authentication tokens page or the Git instructions shown in your project UI), then set it:
