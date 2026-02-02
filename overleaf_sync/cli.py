@@ -3,9 +3,10 @@ import webbrowser
 import os
 import platform
 import sys
+import concurrent.futures
 
 from .config import load_config, prompt_first_run, save_config, Config, get_logs_dir
-from .sync import run_sync_once, run_sync
+from .sync import run_sync_once, run_sync, run_sync_validate_first
 from .scheduler import install_macos_launchagent, uninstall_macos_launchagent, install_systemd_user, uninstall_systemd_user
 from .olbrowser_login import login_via_qt
 
@@ -30,25 +31,36 @@ def install_scheduler(cfg: Config):
         install_systemd_user(interval)
 
 
-def cmd_install(args):
-    cfg = load_config() or prompt_first_run()
-    # Run a manual sync first to validate config and access
-    try:
-        print("Running a validation sync before installing scheduler...")
-        run_sync(cfg)
-    except Exception as e:
-        print(f"Validation sync failed: {e}")
-        print("Not installing scheduler. Fix the issue and retry.")
-        return
-    install_scheduler(cfg)
-
-
-def cmd_uninstall(args):
+def uninstall_scheduler():
     os_name = platform.system()
     if os_name == "Darwin":
         uninstall_macos_launchagent()
     else:
         uninstall_systemd_user()
+
+
+def cmd_install(args):
+    cfg = load_config() or prompt_first_run()
+    # Run a manual sync first to validate config and access
+    try:
+        print("Running a validation sync before installing scheduler...")
+        run_sync_validate_first(cfg)
+    except Exception as e:
+        print(f"Validation sync failed: {e}")
+        print("Not installing scheduler. Fix the issue and retry.")
+        return
+    # Uninstall any existing scheduler instance, then install fresh
+    print("Ensuring scheduler is installed exactly once (uninstalling any existing instance)...")
+    try:
+        uninstall_scheduler()
+    except Exception:
+        # Ignore uninstall errors (e.g., not installed)
+        pass
+    install_scheduler(cfg)
+
+
+def cmd_uninstall(args):
+    uninstall_scheduler()
 
 
 def cmd_run_once(args):
@@ -121,6 +133,40 @@ def cmd_clear_cookie(args):
     print("Cleared stored cookies from config.")
 
 
+def cmd_set_git_token(args):
+    cfg = load_config() or prompt_first_run()
+    token = args.value
+    if not token:
+        try:
+            token = input("Overleaf Git authentication token: ").strip()
+        except KeyboardInterrupt:
+            token = ""
+    if not token:
+        print("No token provided.")
+        return
+    cfg.git_token = token
+    save_config(cfg)
+    print("Stored Overleaf Git token in config. Keep it secret.")
+
+
+def cmd_clear_git_token(args):
+    cfg = load_config() or prompt_first_run()
+    cfg.git_token = None
+    save_config(cfg)
+    print("Cleared Overleaf Git token from config.")
+
+
+def cmd_set_name_suffix(args):
+    cfg = load_config() or prompt_first_run()
+    val = args.value.lower()
+    if val not in ("on", "off"):
+        print("Invalid value; use 'on' or 'off'")
+        return
+    cfg.append_id_suffix = (val == "on")
+    save_config(cfg)
+    print(f"Folder name ID suffix {'enabled' if cfg.append_id_suffix else 'disabled'}.")
+
+
 def _tail(path: str, lines: int = 50) -> list[str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -131,17 +177,137 @@ def _tail(path: str, lines: int = 50) -> list[str]:
 
 
 def cmd_status(args):
-    logs_dir = get_logs_dir()
-    app_log = os.path.join(logs_dir, "app.log")
-    runner_log = os.path.join(logs_dir, "runner.log")
-    runner_err = os.path.join(logs_dir, "runner.err.log")
-    print("Status (last 50 lines):")
-    for label, path in [("App", app_log), ("Runner", runner_log), ("RunnerErr", runner_err)]:
-        if os.path.exists(path):
-            print(f"--- {label}: {path} ---")
-            print("".join(_tail(path)))
+    # Sync health check: verify local repos match remote heads
+    cfg = load_config() or prompt_first_run()
+    if not cfg.git_token:
+        print("Git token missing. Run 'overleaf-sync set-git-token'.")
+        return
+    # Gather projects
+    cookies = cfg.cookies if cfg.cookies else None
+    if not cookies:
+        from .cookies import load_overleaf_cookies
+        cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
+    from .overleaf_api import create_api, list_projects_sorted_by_last_updated
+    api = create_api(cfg.host)
+    projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+
+    from .projects import folder_name_for
+    from .git_ops import ensure_remote, detect_default_branch, get_remote_branch_head, get_local_branch_head
+
+    total = len(projects)
+    if total == 0:
+        print("No projects found.")
+        return
+    print(f"Checking status for {total} latest project(s)...", flush=True)
+
+    def _check(p: dict):
+        pid = p.get("id")
+        name = p.get("name")
+        folder = folder_name_for(name, pid)
+        repo_path = os.path.join(cfg.base_dir, folder)
+        if not os.path.isdir(os.path.join(repo_path, ".git")):
+            return ("missing", f"Missing: {name}")
+        try:
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            if not rhead or not lhead:
+                return ("outdated", f"Outdated: {name} (unable to determine heads)")
+            if rhead != lhead:
+                return ("outdated", f"Outdated: {name} (remote {rhead[:7]} vs local {lhead[:7]})")
+            return ("up", None)
+        except Exception as e:
+            return ("outdated", f"Outdated: {name} (error: {e})")
+
+    up_to_date = 0
+    missing = 0
+    outdated = 0
+    issues: list[str] = []
+    done = 0
+    max_workers = min(16, total)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_check, p) for p in projects]
+        for fut in concurrent.futures.as_completed(futures):
+            status, msg = fut.result()
+            done += 1
+            if status == "up":
+                up_to_date += 1
+            elif status == "missing":
+                missing += 1
+                if msg:
+                    issues.append(msg)
+            else:
+                outdated += 1
+                if msg:
+                    issues.append(msg)
+    print(f"Summary: {up_to_date}/{total} up to date, {missing}/{total} missing, {outdated}/{total} outdated.")
+
+    # Identify old projects (not in latest set)
+    from .projects import folder_name_for
+    expected = {folder_name_for(p.get("name"), p.get("id")) for p in projects}
+    old_repos = []
+    for entry in os.listdir(cfg.base_dir):
+        path = os.path.join(cfg.base_dir, entry)
+        if os.path.isdir(os.path.join(path, ".git")) and entry not in expected:
+            old_repos.append(path)
+
+    lingering = []
+    removed = []
+    if args.prune and old_repos:
+        import shutil
+        from .git_ops import is_worktree_clean, has_unpushed_commits
+        for repo in old_repos:
+            branch = detect_default_branch(repo)
+            clean = is_worktree_clean(repo)
+            ahead = has_unpushed_commits(repo, branch)
+            if clean and ahead is False:
+                try:
+                    shutil.rmtree(repo)
+                    removed.append(repo)
+                except Exception:
+                    lingering.append(repo)
+            else:
+                lingering.append(repo)
+
+    if removed:
+        print(f"Pruned {len(removed)} old project(s).")
+    if lingering:
+        print(f"Lingering old projects (cannot delete safely): {len(lingering)}")
+        for r in lingering[:5]:
+            print(f"- {r}")
+
+    if not issues:
+        # Everything OK
+        logs_dir = get_logs_dir()
+        app_log = os.path.join(logs_dir, "app.log")
+        runner_log = os.path.join(logs_dir, "runner.log")
+        runner_err = os.path.join(logs_dir, "runner.err.log")
+        has_runner_logs = (os.path.exists(runner_log) or os.path.exists(runner_err))
+        last_success = None
+        if os.path.exists(app_log):
+            lines = _tail(app_log, 200)
+            for line in reversed(lines):
+                line = line.strip()
+                if line.startswith("[") and "] Synced" in line:
+                    last_success = line
+                    break
+        if last_success and has_runner_logs:
+            print(f"Background runner OK. {last_success}")
+        elif last_success:
+            print(f"Manual sync OK. {last_success}")
         else:
-            print(f"--- {label}: {path} (missing) ---")
+            if has_runner_logs:
+                print("Everything OK. No successful sync recorded yet.")
+            else:
+                print("Everything OK. No background runs recorded yet.")
+        return
+
+    # Print brief issues overview
+    if issues:
+        print("Issues:")
+        for msg in issues[:10]:
+            print(f"- {msg}")
 
 
 def cmd_browser_login(args):
@@ -251,7 +417,8 @@ def main():
     p_ccook = sub.add_parser("clear-cookie", help="Clear stored cookies from config")
     p_ccook.set_defaults(func=cmd_clear_cookie)
 
-    p_status = sub.add_parser("status", help="Show recent sync status from logs")
+    p_status = sub.add_parser("status", help="Show current sync state; optional prune old projects")
+    p_status.add_argument("--prune", action="store_true", help="Remove old local projects not in latest set if safe")
     p_status.set_defaults(func=cmd_status)
 
     p_blogin = sub.add_parser("browser-login", help="Open browser and guide you to copy cookies")
@@ -259,6 +426,17 @@ def main():
 
     p_blogin_qt = sub.add_parser("browser-login-qt", help="Use a Qt browser to login and auto-capture cookies (requires PySide6)")
     p_blogin_qt.set_defaults(func=cmd_browser_login_qt)
+
+    p_sgt = sub.add_parser("set-git-token", help="Store Overleaf Git authentication token for cloning/pulling")
+    p_sgt.add_argument("value", nargs="?", help="Token string")
+    p_sgt.set_defaults(func=cmd_set_git_token)
+
+    p_cgt = sub.add_parser("clear-git-token", help="Clear stored Overleaf Git token")
+    p_cgt.set_defaults(func=cmd_clear_git_token)
+
+    p_ns = sub.add_parser("set-name-suffix", help="Toggle appending short project ID to folder names (on|off)")
+    p_ns.add_argument("value", choices=["on", "off"])
+    p_ns.set_defaults(func=cmd_set_name_suffix)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):
