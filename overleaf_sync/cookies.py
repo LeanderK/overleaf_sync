@@ -4,13 +4,6 @@ import tempfile
 from typing import Dict, List
 
 try:
-    from rookiepy import safari as rookie_safari
-    from rookiepy import firefox as rookie_firefox
-except Exception:  # pragma: no cover
-    rookie_safari = None
-    rookie_firefox = None
-
-try:
     import browsercookie  # type: ignore
 except Exception:  # pragma: no cover
     browsercookie = None
@@ -51,32 +44,25 @@ def parse_cookie_string(s: str) -> Dict[str, str]:
 
 
 def load_overleaf_cookies(browser: str, profile: str | None = None) -> Dict[str, str]:
-    """Load Overleaf cookies using Rookie from the selected browser/profile.
+    """Load Overleaf cookies from the selected browser/profile.
 
     Returns a dict of cookie name -> value suitable for PyOverleaf Api.login_from_cookies.
+    Note: Safari cookie loading via code is no longer supported; use Qt login or paste cookies.
     """
     if browser == "safari":
-        if rookie_safari is None:
-            raise RuntimeError("Safari cookie access requires rookiepy; install with 'uv add rookiepy' or 'pip install rookiepy'. On macOS, granting Full Disk Access to your terminal may be required.")
-        # Rookie handles Safari paths internally
-        cookies = rookie_safari(OVERLEAF_DOMAINS)
-        return _to_cookie_dict(cookies)
+        raise RuntimeError(
+            "Safari cookie access is not supported without Qt. Please run 'overleaf-pull browser-login-qt' or paste cookies via 'overleaf-pull set-cookie'."
+        )
     elif browser == "firefox":
-        if rookie_firefox is None:
-            # Fallback to browsercookie for Firefox if rookiepy is unavailable
-            if browsercookie is None:
-                raise RuntimeError("Firefox cookie access requires rookiepy or browsercookie.")
-            cj = browsercookie.firefox()
-            jar: Dict[str, str] = {}
-            for c in cj:
-                domain = getattr(c, "domain", None)
-                if domain and not any(d in domain for d in OVERLEAF_DOMAINS):
-                    continue
-                jar[c.name] = c.value
-            return jar
-        # Firefox may lock cookies.sqlite; Rookie generally reads via its own logic,
-        # but if needed, we can copy the profile dir to a temp path.
-        cookies = rookie_firefox(OVERLEAF_DOMAINS)
-        return _to_cookie_dict(cookies)
+        if browsercookie is None:
+            raise RuntimeError("Firefox cookie access requires the 'browsercookie' package.")
+        cj = browsercookie.firefox()
+        jar: Dict[str, str] = {}
+        for c in cj:
+            domain = getattr(c, "domain", None)
+            if domain and not any(d in domain for d in OVERLEAF_DOMAINS):
+                continue
+            jar[c.name] = c.value
+        return jar
     else:
-        raise ValueError("Unsupported browser; choose 'safari' or 'firefox'.")
+        raise ValueError("Unsupported browser; choose 'firefox' or use Qt login.")

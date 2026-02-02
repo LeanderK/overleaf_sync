@@ -12,7 +12,8 @@ overleaf-pull init --install
 
 Overview
 - Pull-only tool that periodically clones/pulls your latest Overleaf projects into a local directory.
-- Discovers projects via your browser cookies (Rookie) and lists them via PyOverleaf; syncs using Git.
+- Discovers projects via cookies captured during setup (Qt login recommended) or manual paste; Firefox cookies can be read automatically.
+- Lists projects via PyOverleaf; syncs using Git.
 - Runs in the background as a macOS LaunchAgent or Linux systemd user timer.
 
 Requirements

@@ -4,7 +4,6 @@ channels:
 dependencies:
   - python>=3.10
   - pip
-  - pyside6
   - pip:
-      - rookiepy==0.5.4
       - pyoverleaf>=0.1.7
+  - browsercookie>=0.7
