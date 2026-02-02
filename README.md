@@ -112,6 +112,14 @@ uv run python -m overleaf_sync.cli install-scheduler
 uv run python -m overleaf_sync.cli uninstall-scheduler
 ```
 Installing the scheduler is idempotent: it uninstalls any existing instance first, then reinstalls to ensure only one scheduler is active.
+Publish to PyPI (CI)
+- This repo includes a GitHub Actions workflow that publishes on tags `v*` using PyPI Trusted Publishers (OIDC).
+- Trigger a release:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+- The workflow builds sdist/wheel and publishes without storing secrets.
 - Adjust interval or latest count:
 ```bash
 overleaf-pull set-interval 12h

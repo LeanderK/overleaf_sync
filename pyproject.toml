@@ -34,6 +34,12 @@ Issues = "https://github.com/LeanderK/overleaf_sync/issues"
 package = true
 # uv will install from [project] dependencies
 
+[tool.hatch.build.targets.wheel]
+packages = ["overleaf_sync"]
+
+[tool.hatch.build.targets.sdist]
+include = ["overleaf_sync/**", "README.md", "pyproject.toml"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
