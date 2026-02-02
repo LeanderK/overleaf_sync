@@ -1,6 +1,15 @@
 # Overleaf Pull-Only Sync CLI
 ![PyPI - Version](https://img.shields.io/pypi/v/overleaf-pull)
 
+Quick Start (users)
+```bash
+# Install with Qt login support
+pip install 'overleaf-pull[qt]'
+
+# Guided setup and background install
+overleaf-pull init --install
+```
+
 Overview
 - Pull-only tool that periodically clones/pulls your latest Overleaf projects into a local directory.
 - Discovers projects via your browser cookies (Rookie) and lists them via PyOverleaf; syncs using Git.
@@ -9,31 +18,19 @@ Overview
 Requirements
 - macOS or Linux with Git installed.
 - Python 3.10+.
-- Packages: rookiepy, pyoverleaf (installed via requirements.txt).
+- Dependencies are installed automatically via pip. Optional extras: `[qt]` for PySide6 (Qt login).
 - Overleaf Git integration enabled on your account to allow cloning/pulling via git.overleaf.com.
 
-Install
+Install (pip)
 ```bash
-# # Using uv (recommended)
-# uv currently not working!
-# uv sync
-
-# Or using conda
-conda env create -f environment.yml
-conda activate overleaf-sync
-
-# Or using pip/venv
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+pip install overleaf-pull
+# Optional Qt login support:
+pip install 'overleaf-pull[qt]'
 ```
 
-First Run (setup)
+Quick Setup
 ```bash
 overleaf-pull init --install
-# If the console script isn't found, use:
-# uv currently not working!
-# uv run python -m overleaf_sync.cli init --install
 ```
 - Prompts for the base directory, interval (1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
 - Offers a Qt browser login to capture cookies automatically (default Yes if PySide6 is installed). Falls back to optional manual cookie paste.
@@ -42,17 +39,13 @@ overleaf-pull init --install
 - Runs a validation sync before installing the scheduler, to confirm access.
 
 Manual Commands
-- Run once now:
+Run once now:
 ```bash
 overleaf-pull run-once
-# Or via uv:
-uv run python -m overleaf_sync.cli run-once
 ```
 - Manual sync (with optional overrides):
 ```bash
 overleaf-pull sync --count 5 --base-dir ~/Overleaf --browser firefox
-# Or via uv:
-uv run python -m overleaf_sync.cli sync --count 5 --base-dir ~/Overleaf --browser firefox
 ```
 - Store or clear cookies in config:
 - Folder naming preference:
@@ -76,18 +69,11 @@ Required cookies
 
 Qt browser login (optional)
 - Use a built-in Qt browser to log in and auto-capture cookies.
-- Conda (recommended on macOS/Linux):
 ```bash
-conda activate overleaf-sync
-conda install -c conda-forge pyside6
+pip install 'overleaf-pull[qt]'
 overleaf-pull browser-login-qt
 ```
-- Pip/venv alternative:
-```bash
-pip install PySide6
-python -m overleaf_sync.cli browser-login-qt
-```
-During setup, if PySide6 is present, the tool will offer the Qt login flow by default.
+During setup, if PySide6 is present, the tool offers the Qt login flow by default.
 
 Git authentication token
 - Overleaf requires a Git auth token for `git clone`/`git pull`.
@@ -108,9 +94,6 @@ overleaf-pull status
 ```bash
 overleaf-pull install-scheduler
 overleaf-pull uninstall-scheduler
-# Or via uv:
-uv run python -m overleaf_sync.cli install-scheduler
-uv run python -m overleaf_sync.cli uninstall-scheduler
 ```
 Installing the scheduler is idempotent: it uninstalls any existing instance first, then reinstalls to ensure only one scheduler is active.
 Publish to PyPI (CI)
@@ -154,4 +137,20 @@ Background runs
 overleaf-pull set-git-token
 ```
 - Without a token, new clones will fail with 403; existing repos may also fail if their remotes lack the token. Prompts are disabled in background.
+
+Development
+- Create a local environment and install from source:
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+# Optional Qt support
+pip install PySide6
+```
+- Conda alternative:
+```bash
+conda env create -f environment.yml
+conda activate overleaf-sync
+pip install -e .
+```
 
