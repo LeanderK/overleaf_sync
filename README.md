@@ -1,4 +1,5 @@
 # Overleaf Pull-Only Sync CLI
+![PyPI - Version](https://img.shields.io/pypi/v/overleaf-pull)
 
 Overview
 - Pull-only tool that periodically clones/pulls your latest Overleaf projects into a local directory.
