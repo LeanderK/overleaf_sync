@@ -16,6 +16,7 @@ class Config:
     host: str = "www.overleaf.com"
     git_helper: bool = True
     cookies: Optional[Dict[str, str]] = None
+    git_token: Optional[str] = None
 
 
 def _mac_paths() -> Tuple[str, str, str]:
@@ -150,6 +151,7 @@ def prompt_first_run() -> Config:
         host=host,
         git_helper=git_helper,
         cookies=cookies,
+        git_token=None,
     )
     save_config(cfg)
     print(f"Saved config to {get_config_path()}")

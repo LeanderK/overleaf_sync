@@ -62,6 +62,18 @@ overleaf-sync browser-login
 Required cookies
 - At minimum: `overleaf_session2` and `GCLB` must be present in your Cookie header for authenticated requests.
 - document.cookie cannot see HttpOnly cookies; copy the full Cookie header from the Network tab for a request to your Overleaf host.
+
+Git authentication token
+- Overleaf requires a Git auth token for `git clone`/`git pull`.
+- Generate a token in your Overleaf account (see the Git integration/authentication tokens page or the Git instructions shown in your project UI), then set it:
+```bash
+overleaf-sync set-git-token
+# Paste your token when prompted
+
+# Clear it if needed
+overleaf-sync clear-git-token
+```
+- With a token set, the tool will use URLs like `https://git:<TOKEN>@git.overleaf.com/<PROJECT_ID>` automatically.
 - Status from logs:
 ```bash
 overleaf-sync status

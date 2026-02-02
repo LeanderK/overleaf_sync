@@ -121,6 +121,29 @@ def cmd_clear_cookie(args):
     print("Cleared stored cookies from config.")
 
 
+def cmd_set_git_token(args):
+    cfg = load_config() or prompt_first_run()
+    token = args.value
+    if not token:
+        try:
+            token = input("Overleaf Git authentication token: ").strip()
+        except KeyboardInterrupt:
+            token = ""
+    if not token:
+        print("No token provided.")
+        return
+    cfg.git_token = token
+    save_config(cfg)
+    print("Stored Overleaf Git token in config. Keep it secret.")
+
+
+def cmd_clear_git_token(args):
+    cfg = load_config() or prompt_first_run()
+    cfg.git_token = None
+    save_config(cfg)
+    print("Cleared Overleaf Git token from config.")
+
+
 def _tail(path: str, lines: int = 50) -> list[str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -259,6 +282,13 @@ def main():
 
     p_blogin_qt = sub.add_parser("browser-login-qt", help="Use a Qt browser to login and auto-capture cookies (requires PySide6)")
     p_blogin_qt.set_defaults(func=cmd_browser_login_qt)
+
+    p_sgt = sub.add_parser("set-git-token", help="Store Overleaf Git authentication token for cloning/pulling")
+    p_sgt.add_argument("value", nargs="?", help="Token string")
+    p_sgt.set_defaults(func=cmd_set_git_token)
+
+    p_cgt = sub.add_parser("clear-git-token", help="Clear stored Overleaf Git token")
+    p_cgt.set_defaults(func=cmd_clear_git_token)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

@@ -26,8 +26,8 @@ def run_sync(cfg: Config):
         pid = p["id"]
         name = p["name"]
         folder = folder_name_for(name, pid)
-        repo_path = clone_if_missing(cfg.base_dir, folder, pid)
-        ensure_remote(repo_path, pid)
+        repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+        ensure_remote(repo_path, pid, cfg.git_token)
         branch = detect_default_branch(repo_path)
         pull_remote(repo_path, branch)
     msg = f"[{datetime.now().isoformat(timespec='seconds')}] Synced {len(projects)} projects into {cfg.base_dir}"
