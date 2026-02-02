@@ -144,6 +144,17 @@ def cmd_clear_git_token(args):
     print("Cleared Overleaf Git token from config.")
 
 
+def cmd_set_name_suffix(args):
+    cfg = load_config() or prompt_first_run()
+    val = args.value.lower()
+    if val not in ("on", "off"):
+        print("Invalid value; use 'on' or 'off'")
+        return
+    cfg.append_id_suffix = (val == "on")
+    save_config(cfg)
+    print(f"Folder name ID suffix {'enabled' if cfg.append_id_suffix else 'disabled'}.")
+
+
 def _tail(path: str, lines: int = 50) -> list[str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -289,6 +300,10 @@ def main():
 
     p_cgt = sub.add_parser("clear-git-token", help="Clear stored Overleaf Git token")
     p_cgt.set_defaults(func=cmd_clear_git_token)
+
+    p_ns = sub.add_parser("set-name-suffix", help="Toggle appending short project ID to folder names (on|off)")
+    p_ns.add_argument("value", choices=["on", "off"])
+    p_ns.set_defaults(func=cmd_set_name_suffix)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

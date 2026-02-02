@@ -28,7 +28,7 @@ def run_sync(cfg: Config):
     for p in projects:
         pid = p["id"]
         name = p["name"]
-        folder = folder_name_for(name, pid)
+        folder = folder_name_for(name, pid, cfg.append_id_suffix)
         repo_dir = os.path.join(cfg.base_dir, folder)
         needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
         if needs_clone and not cfg.git_token:

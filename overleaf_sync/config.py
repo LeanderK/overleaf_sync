@@ -17,6 +17,7 @@ class Config:
     git_helper: bool = True
     cookies: Optional[Dict[str, str]] = None
     git_token: Optional[str] = None
+    append_id_suffix: bool = True
 
 
 def _mac_paths() -> Tuple[str, str, str]:
@@ -133,6 +134,10 @@ def prompt_first_run() -> Config:
         if not git_token:
             print("Token cannot be empty. Please paste your token.")
 
+    # Folder naming preference
+    ans = input("Append short project ID to folder names to avoid collisions? [Y/n]: ").strip().lower()
+    append_id_suffix = (ans != "n")
+
     # Optional: paste Overleaf cookies (JSON map or Cookie header)
     print("Optional: paste Overleaf cookies to avoid browser access (press Enter to skip).")
     cookie_in = input("Cookies (JSON map or 'name=value; name2=value2'): ").strip()
@@ -161,6 +166,7 @@ def prompt_first_run() -> Config:
         git_helper=git_helper,
         cookies=cookies,
         git_token=git_token,
+        append_id_suffix=append_id_suffix,
     )
     save_config(cfg)
     print(f"Saved config to {get_config_path()}")

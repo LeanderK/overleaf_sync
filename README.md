@@ -51,6 +51,12 @@ overleaf-sync sync --count 5 --base-dir ~/Overleaf --browser firefox
 uv run python -m overleaf_sync.cli sync --count 5 --base-dir ~/Overleaf --browser firefox
 ```
 - Store or clear cookies in config:
+- Folder naming preference:
+```bash
+overleaf-sync set-name-suffix off   # Use display name only
+overleaf-sync set-name-suffix on    # Default: append a short ID to avoid collisions
+```
+This affects the local folder names only; project display names on Overleaf remain unchanged.
 ```bash
 overleaf-sync set-cookie "name=value; other=value2"
 overleaf-sync clear-cookie
