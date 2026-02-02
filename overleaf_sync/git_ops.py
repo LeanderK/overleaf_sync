@@ -12,10 +12,40 @@ def build_remote_url(project_id: str, token: Optional[str] = None) -> str:
     return REMOTE_URL_FMT.format(id=project_id)
 
 
-def _run(cmd: list[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+def _git_env() -> dict:
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
-    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True, env=env)
+    return env
+
+
+def _run(cmd: list[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True, env=_git_env())
+
+
+def _run_stream(cmd: list[str], cwd: Optional[str] = None, mask_token: Optional[str] = None) -> tuple[int, str]:
+    """Run a command and stream combined stdout/stderr live to the console.
+
+    Returns (returncode, combined_output). Masks token occurrences in output if provided.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=_git_env(),
+        bufsize=1,
+    )
+    combined: list[str] = []
+    if proc.stdout is not None:
+        for line in proc.stdout:
+            s = line.rstrip("\n")
+            if mask_token:
+                s = s.replace(mask_token, "***")
+            print(s)
+            combined.append(s)
+    rc = proc.wait()
+    return rc, "\n".join(combined)
 
 
 def repo_exists(path: str) -> bool:
@@ -30,18 +60,9 @@ def clone_if_missing(base_dir: str, folder: str, project_id: str, token: Optiona
         if token:
             safe_url = url.replace(token, "***")
         print(f"$ git clone {safe_url} {path}")
-        res = _run(["git", "clone", url, path])
-        out = (res.stdout or "").strip()
-        err = (res.stderr or "").strip()
-        if token:
-            out = out.replace(token, "***")
-            err = err.replace(token, "***")
-        if out:
-            print(out)
-        if err:
-            print(err)
-        if res.returncode != 0:
-            raise RuntimeError(f"git clone failed: {err}")
+        rc, combined = _run_stream(["git", "clone", url, path], mask_token=token)
+        if rc != 0:
+            raise RuntimeError(f"git clone failed: {combined.splitlines()[-1] if combined else 'unknown error'}")
     return path
 
 
@@ -85,20 +106,9 @@ def detect_default_branch(path: str) -> str:
 
 def pull_remote(path: str, branch: str) -> None:
     print(f"$ git pull {REMOTE_NAME} {branch}")
-    res = _run(["git", "pull", REMOTE_NAME, branch], cwd=path)
-    if res.returncode != 0:
-        out = (res.stdout or "").strip()
-        err = (res.stderr or "").strip()
-        if out:
-            print(out)
-        if err:
-            print(err)
-        # token not available here; URLs are stored in remote
-        raise RuntimeError(f"git pull failed: {err}")
-    else:
-        out = (res.stdout or "").strip()
-        if out:
-            print(out)
+    rc, combined = _run_stream(["git", "pull", REMOTE_NAME, branch], cwd=path)
+    if rc != 0:
+        raise RuntimeError(f"git pull failed: {combined.splitlines()[-1] if combined else 'unknown error'}")
 
 
 def enable_git_helper(os_name: str) -> None:
