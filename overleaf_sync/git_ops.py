@@ -26,11 +26,21 @@ def clone_if_missing(base_dir: str, folder: str, project_id: str, token: Optiona
     path = os.path.join(base_dir, folder)
     if not repo_exists(path):
         url = build_remote_url(project_id, token)
+        safe_url = url
+        if token:
+            safe_url = url.replace(token, "***")
+        print(f"$ git clone {safe_url} {path}")
         res = _run(["git", "clone", url, path])
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        if token:
+            out = out.replace(token, "***")
+            err = err.replace(token, "***")
+        if out:
+            print(out)
+        if err:
+            print(err)
         if res.returncode != 0:
-            err = res.stderr.strip() or res.stdout.strip()
-            if token and token in err:
-                err = err.replace(token, "***")
             raise RuntimeError(f"git clone failed: {err}")
     return path
 
@@ -41,15 +51,24 @@ def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> No
     res = _run(["git", "remote", "get-url", REMOTE_NAME], cwd=path)
     if res.returncode != 0:
         if target_url:
+            safe_url = target_url
+            if token:
+                safe_url = target_url.replace(token, "***")
+            print(f"$ git remote add {REMOTE_NAME} {safe_url}")
             _run(["git", "remote", "add", REMOTE_NAME, target_url], cwd=path)
         return
     current = res.stdout.strip()
     if target_url and current != target_url:
+        safe_url = target_url
+        if token:
+            safe_url = target_url.replace(token, "***")
+        print(f"$ git remote set-url {REMOTE_NAME} {safe_url}")
         _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=path)
 
 
 def detect_default_branch(path: str) -> str:
     # Try remote heads
+    print(f"$ git ls-remote --heads {REMOTE_NAME}")
     res = _run(["git", "ls-remote", "--heads", REMOTE_NAME], cwd=path)
     heads = res.stdout.splitlines()
     for line in heads:
@@ -59,16 +78,27 @@ def detect_default_branch(path: str) -> str:
         if line.endswith("refs/heads/main"):
             return "main"
     # Fallback to local current
+    print("$ git rev-parse --abbrev-ref HEAD")
     res2 = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=path)
     return res2.stdout.strip() or "master"
 
 
 def pull_remote(path: str, branch: str) -> None:
+    print(f"$ git pull {REMOTE_NAME} {branch}")
     res = _run(["git", "pull", REMOTE_NAME, branch], cwd=path)
     if res.returncode != 0:
-        err = res.stderr.strip() or res.stdout.strip()
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        if out:
+            print(out)
+        if err:
+            print(err)
         # token not available here; URLs are stored in remote
         raise RuntimeError(f"git pull failed: {err}")
+    else:
+        out = (res.stdout or "").strip()
+        if out:
+            print(out)
 
 
 def enable_git_helper(os_name: str) -> None:
