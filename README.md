@@ -33,6 +33,7 @@ overleaf-sync init --install
 uv run python -m overleaf_sync.cli init --install
 ```
 - Prompts for the base directory, interval (1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
+- Prompts for your Overleaf Git authentication token (required for cloning/pulling and background runs).
 - Installs a background job (LaunchAgent on macOS, systemd user timer on Linux).
 - Runs a validation sync before installing the scheduler, to confirm access.
 

@@ -124,6 +124,15 @@ def prompt_first_run() -> Config:
     git_helper_ans = input("Enable OS Git credential helper? [Y/n]: ").strip().lower()
     git_helper = (git_helper_ans != "n")
 
+    # Git token (required for cloning/pulling)
+    print("Overleaf now requires a Git authentication token for cloning/pulling.")
+    print("Find it via your Overleaf project's Git panel or account settings.")
+    git_token = ""
+    while not git_token:
+        git_token = input("Enter Overleaf Git token (required): ").strip()
+        if not git_token:
+            print("Token cannot be empty. Please paste your token.")
+
     # Optional: paste Overleaf cookies (JSON map or Cookie header)
     print("Optional: paste Overleaf cookies to avoid browser access (press Enter to skip).")
     cookie_in = input("Cookies (JSON map or 'name=value; name2=value2'): ").strip()
@@ -151,7 +160,7 @@ def prompt_first_run() -> Config:
         host=host,
         git_helper=git_helper,
         cookies=cookies,
-        git_token=None,
+        git_token=git_token,
     )
     save_config(cfg)
     print(f"Saved config to {get_config_path()}")
