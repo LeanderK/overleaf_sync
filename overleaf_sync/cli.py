@@ -183,13 +183,17 @@ def cmd_status(args):
     from .git_ops import ensure_remote, detect_default_branch, get_remote_branch_head, get_local_branch_head
 
     issues = []
+    up_to_date = 0
+    missing = 0
+    outdated = 0
     for p in projects:
         pid = p.get("id")
         name = p.get("name")
         folder = folder_name_for(name, pid, cfg.append_id_suffix)
         repo_path = os.path.join(cfg.base_dir, folder)
         if not os.path.isdir(os.path.join(repo_path, ".git")):
-            issues.append(f"Missing local clone for '{name}' ({pid}) at {repo_path}")
+            missing += 1
+            issues.append(f"Missing: {name}")
             continue
         # Ensure remote configured with token
         ensure_remote(repo_path, pid, cfg.git_token)
@@ -197,10 +201,51 @@ def cmd_status(args):
         rhead = get_remote_branch_head(repo_path, branch)
         lhead = get_local_branch_head(repo_path, branch)
         if not rhead or not lhead:
-            issues.append(f"Unable to determine heads for '{name}' ({pid}).")
+            outdated += 1
+            issues.append(f"Outdated: {name} (unable to determine heads)")
             continue
         if rhead != lhead:
-            issues.append(f"Out of sync: '{name}' ({pid}) remote {rhead[:7]} != local {lhead[:7]}")
+            outdated += 1
+            issues.append(f"Outdated: {name} (remote {rhead[:7]} vs local {lhead[:7]})")
+        else:
+            up_to_date += 1
+
+    total = len(projects)
+    print(f"Summary: {up_to_date}/{total} up to date, {missing}/{total} missing, {outdated}/{total} outdated.")
+
+    # Identify old projects (not in latest set)
+    from .projects import folder_name_for
+    expected = {folder_name_for(p.get("name"), p.get("id"), cfg.append_id_suffix) for p in projects}
+    old_repos = []
+    for entry in os.listdir(cfg.base_dir):
+        path = os.path.join(cfg.base_dir, entry)
+        if os.path.isdir(os.path.join(path, ".git")) and entry not in expected:
+            old_repos.append(path)
+
+    lingering = []
+    removed = []
+    if args.prune and old_repos:
+        import shutil
+        from .git_ops import is_worktree_clean, has_unpushed_commits
+        for repo in old_repos:
+            branch = detect_default_branch(repo)
+            clean = is_worktree_clean(repo)
+            ahead = has_unpushed_commits(repo, branch)
+            if clean and ahead is False:
+                try:
+                    shutil.rmtree(repo)
+                    removed.append(repo)
+                except Exception:
+                    lingering.append(repo)
+            else:
+                lingering.append(repo)
+
+    if removed:
+        print(f"Pruned {len(removed)} old project(s).")
+    if lingering:
+        print(f"Lingering old projects (cannot delete safely): {len(lingering)}")
+        for r in lingering[:5]:
+            print(f"- {r}")
 
     if not issues:
         # Everything OK
@@ -220,10 +265,11 @@ def cmd_status(args):
             print("Everything OK. No successful sync recorded yet.")
         return
 
-    # Print issues only
-    print("Issues detected:")
-    for msg in issues:
-        print(f"- {msg}")
+    # Print brief issues overview
+    if issues:
+        print("Issues:")
+        for msg in issues[:10]:
+            print(f"- {msg}")
 
 
 def cmd_browser_login(args):
@@ -333,7 +379,8 @@ def main():
     p_ccook = sub.add_parser("clear-cookie", help="Clear stored cookies from config")
     p_ccook.set_defaults(func=cmd_clear_cookie)
 
-    p_status = sub.add_parser("status", help="Show recent sync status from logs")
+    p_status = sub.add_parser("status", help="Show current sync state; optional prune old projects")
+    p_status.add_argument("--prune", action="store_true", help="Remove old local projects not in latest set if safe")
     p_status.set_defaults(func=cmd_status)
 
     p_blogin = sub.add_parser("browser-login", help="Open browser and guide you to copy cookies")

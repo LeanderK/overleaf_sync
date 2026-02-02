@@ -88,8 +88,7 @@ def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> No
 
 
 def detect_default_branch(path: str) -> str:
-    # Try remote heads
-    print(f"$ git ls-remote --heads {REMOTE_NAME}")
+    # Try remote heads (quiet)
     res = _run(["git", "ls-remote", "--heads", REMOTE_NAME], cwd=path)
     heads = res.stdout.splitlines()
     for line in heads:
@@ -99,7 +98,6 @@ def detect_default_branch(path: str) -> str:
         if line.endswith("refs/heads/main"):
             return "main"
     # Fallback to local current
-    print("$ git rev-parse --abbrev-ref HEAD")
     res2 = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=path)
     return res2.stdout.strip() or "master"
 
@@ -112,9 +110,8 @@ def pull_remote(path: str, branch: str) -> None:
 
 
 def get_remote_branch_head(path: str, branch: str) -> Optional[str]:
-    """Return the remote branch head commit SHA for the given branch, or None if not found."""
+    """Return the remote branch head commit SHA for the given branch, or None if not found (quiet)."""
     ref = f"refs/heads/{branch}"
-    print(f"$ git ls-remote {REMOTE_NAME} {ref}")
     res = _run(["git", "ls-remote", REMOTE_NAME, ref], cwd=path)
     if res.returncode != 0:
         return None
@@ -135,6 +132,29 @@ def get_local_branch_head(path: str, branch: str) -> Optional[str]:
     if res2.returncode == 0:
         return (res2.stdout or "").strip() or None
     return None
+
+
+def is_worktree_clean(path: str) -> bool:
+    """Return True if working tree and index are clean (no local modifications)."""
+    res = _run(["git", "status", "--porcelain"], cwd=path)
+    return res.returncode == 0 and (res.stdout.strip() == "")
+
+
+def has_unpushed_commits(path: str, branch: str) -> Optional[bool]:
+    """Return True if local is ahead of remote for branch. None if cannot determine."""
+    # Ensure remote ref exists locally; do a quiet ls-remote to confirm
+    rsha = get_remote_branch_head(path, branch)
+    if not rsha:
+        return None
+    # Count commits that are in HEAD but not in remote branch
+    res = _run(["git", "rev-list", f"overleaf/{branch}..HEAD", "--count"], cwd=path)
+    if res.returncode != 0:
+        return None
+    try:
+        cnt = int((res.stdout or "0").strip())
+    except ValueError:
+        return None
+    return cnt > 0
 
 
 def enable_git_helper(os_name: str) -> None:
