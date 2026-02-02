@@ -1,0 +1,2 @@
+rookiepy==0.5.4
+pyoverleaf>=0.1.7

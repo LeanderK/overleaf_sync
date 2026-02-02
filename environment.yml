@@ -1,0 +1,9 @@
+name: overleaf-sync
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pip
+  - pip:
+      - rookiepy==0.5.4
+      - pyoverleaf>=0.1.7

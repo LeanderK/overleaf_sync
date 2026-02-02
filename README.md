@@ -1,0 +1,103 @@
+# Overleaf Pull-Only Sync CLI
+
+Overview
+- Pull-only tool that periodically clones/pulls your latest Overleaf projects into a local directory.
+- Discovers projects via your browser cookies (Rookie) and lists them via PyOverleaf; syncs using Git.
+- Runs in the background as a macOS LaunchAgent or Linux systemd user timer.
+
+Requirements
+- macOS or Linux with Git installed.
+- Python 3.10+.
+- Packages: rookiepy, pyoverleaf (installed via requirements.txt).
+- Overleaf Git integration enabled on your account to allow cloning/pulling via git.overleaf.com.
+
+Install
+```bash
+# Using uv (recommended)
+uv sync
+
+# Or using conda
+conda env create -f environment.yml
+conda activate overleaf-sync
+
+# Or using pip/venv
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+First Run (setup)
+```bash
+overleaf-sync init --install
+# If the console script isn't found, use:
+uv run python -m overleaf_sync.cli init --install
+```
+- Prompts for the base directory, interval (1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
+- Installs a background job (LaunchAgent on macOS, systemd user timer on Linux).
+- Runs a validation sync before installing the scheduler, to confirm access.
+
+Manual Commands
+- Run once now:
+```bash
+overleaf-sync run-once
+# Or via uv:
+uv run python -m overleaf_sync.cli run-once
+```
+- Manual sync (with optional overrides):
+```bash
+overleaf-sync sync --count 5 --base-dir ~/Overleaf --browser firefox
+# Or via uv:
+uv run python -m overleaf_sync.cli sync --count 5 --base-dir ~/Overleaf --browser firefox
+```
+- Store or clear cookies in config:
+```bash
+overleaf-sync set-cookie "name=value; other=value2"
+overleaf-sync clear-cookie
+```
+- Browser-assisted cookie capture (like olbrowserlogin):
+```bash
+overleaf-sync browser-login
+# This opens Overleaf in your browser and guides you to copy document.cookie.
+```
+Required cookies
+- At minimum: `overleaf_session2` and `GCLB` must be present in your Cookie header for authenticated requests.
+- document.cookie cannot see HttpOnly cookies; copy the full Cookie header from the Network tab for a request to your Overleaf host.
+- Status from logs:
+```bash
+overleaf-sync status
+```
+- Install or remove background job:
+```bash
+overleaf-sync install-scheduler
+overleaf-sync uninstall-scheduler
+# Or via uv:
+uv run python -m overleaf_sync.cli install-scheduler
+uv run python -m overleaf_sync.cli uninstall-scheduler
+```
+- Adjust interval or latest count:
+```bash
+overleaf-sync set-interval 12h
+overleaf-sync set-count 20
+```
+- Change base directory:
+```bash
+overleaf-sync set-base-dir /path/to/Overleaf
+```
+
+macOS Logs
+- Logs: ~/Library/Logs/overleaf_sync/runner.log
+
+Linux Logs
+- `journalctl --user -u overleaf-sync.timer -u overleaf-sync.service`
+- And ~/.local/state/overleaf_sync/logs/ if configured.
+
+Notes
+- This tool is pull-only; it never pushes to Overleaf.
+- Safari cookie access may require permissions; Firefox is often more reliable for unattended use.
+- If Safari access fails, paste Overleaf cookies once via `set-cookie` to avoid elevated access.
+- Use Git credential helpers for smooth pulls:
+```bash
+git config --global credential.helper osxkeychain   # macOS
+git config --global credential.helper libsecret     # Linux
+```
+

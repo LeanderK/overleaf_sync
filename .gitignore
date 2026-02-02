@@ -1,0 +1,20 @@
+# TeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.toc
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.log
+*.xdv
+*.pdf
+latexmk/
+build/
+_minted*/
+# Python
+__pycache__/
+*.pyc
+.env
+.venv

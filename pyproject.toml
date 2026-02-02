@@ -1,0 +1,22 @@
+[project]
+name = "overleaf-sync"
+version = "0.1.0"
+description = "Pull-only Overleaf project sync using Rookie + PyOverleaf"
+authors = [{ name = "Leander Kurscheidt" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "rookiepy==0.5.4",
+  "pyoverleaf>=0.1.7",
+]
+
+[project.scripts]
+overleaf-sync = "overleaf_sync.cli:main"
+
+[tool.uv]
+package = true
+# uv will install from [project] dependencies
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
