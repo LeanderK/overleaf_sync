@@ -13,7 +13,9 @@ def build_remote_url(project_id: str, token: Optional[str] = None) -> str:
 
 
 def _run(cmd: list[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    return subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True, env=env)
 
 
 def repo_exists(path: str) -> bool:
@@ -34,15 +36,16 @@ def clone_if_missing(base_dir: str, folder: str, project_id: str, token: Optiona
 
 
 def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> None:
-    url = build_remote_url(project_id, token)
+    # If token is provided, ensure remote URL includes it; if not, avoid overriding
+    target_url = build_remote_url(project_id, token) if token else None
     res = _run(["git", "remote", "get-url", REMOTE_NAME], cwd=path)
     if res.returncode != 0:
-        _run(["git", "remote", "add", REMOTE_NAME, url], cwd=path)
-    else:
-        # Update if mismatched
-        current = res.stdout.strip()
-        if current != url:
-            _run(["git", "remote", "set-url", REMOTE_NAME, url], cwd=path)
+        if target_url:
+            _run(["git", "remote", "add", REMOTE_NAME, target_url], cwd=path)
+        return
+    current = res.stdout.strip()
+    if target_url and current != target_url:
+        _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=path)
 
 
 def detect_default_branch(path: str) -> str:

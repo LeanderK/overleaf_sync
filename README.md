@@ -127,3 +127,10 @@ git config --global credential.helper osxkeychain   # macOS
 git config --global credential.helper libsecret     # Linux
 ```
 
+Background runs
+- To avoid interactive Git prompts in schedulers, set an Overleaf Git token once:
+```bash
+overleaf-sync set-git-token
+```
+- Without a token, new clones will fail with 403; existing repos may also fail if their remotes lack the token. Prompts are disabled in background.
+

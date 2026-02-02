@@ -22,14 +22,20 @@ def run_sync(cfg: Config):
 
     projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
 
-    for p in projects:
-        pid = p["id"]
-        name = p["name"]
-        folder = folder_name_for(name, pid)
-        repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
-        ensure_remote(repo_path, pid, cfg.git_token)
-        branch = detect_default_branch(repo_path)
-        pull_remote(repo_path, branch)
+        for p in projects:
+            pid = p["id"]
+            name = p["name"]
+            folder = folder_name_for(name, pid)
+            repo_dir = os.path.join(cfg.base_dir, folder)
+            needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
+            if needs_clone and not cfg.git_token:
+                raise RuntimeError(
+                    "Missing Overleaf Git token for cloning. Run 'overleaf-sync set-git-token' and retry."
+                )
+            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+            pull_remote(repo_path, branch)
     msg = f"[{datetime.now().isoformat(timespec='seconds')}] Synced {len(projects)} projects into {cfg.base_dir}"
     print(msg)
     try:
