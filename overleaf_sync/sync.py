@@ -19,7 +19,7 @@ from .git_ops import (
 def run_sync(cfg: Config):
     # Require Git token for all sync operations to ensure non-interactive background runs
     if not cfg.git_token:
-        raise RuntimeError("Git token is required. Run 'overleaf-sync set-git-token' and retry.")
+        raise RuntimeError("Git token is required. Run 'overleaf-pull set-git-token' and retry.")
     if cfg.git_helper:
         enable_git_helper(platform.system())
 
@@ -41,7 +41,7 @@ def run_sync(cfg: Config):
         needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
         if needs_clone and not cfg.git_token:
             raise RuntimeError(
-                "Missing Overleaf Git token for cloning. Run 'overleaf-sync set-git-token' and retry."
+                "Missing Overleaf Git token for cloning. Run 'overleaf-pull set-git-token' and retry."
             )
         repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
         ensure_remote(repo_path, pid, cfg.git_token)
@@ -100,7 +100,7 @@ def run_sync_validate_first(cfg: Config):
     repo_dir = os.path.join(cfg.base_dir, folder)
     needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
     if needs_clone and not cfg.git_token:
-        raise RuntimeError("Missing Overleaf Git token for cloning. Run 'overleaf-sync set-git-token'.")
+        raise RuntimeError("Missing Overleaf Git token for cloning. Run 'overleaf-pull set-git-token'.")
     repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
     ensure_remote(repo_path, pid, cfg.git_token)
     branch = detect_default_branch(repo_path)

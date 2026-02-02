@@ -137,7 +137,7 @@ def prompt_first_run() -> Config:
         except RuntimeError as e:
             print(str(e))
         except Exception:
-            print("Qt login failed; you can set cookies later via 'overleaf-sync set-cookie'.")
+            print("Qt login failed; you can set cookies later via 'overleaf-pull set-cookie'.")
 
     # Git helper
     git_helper_ans = input("Enable OS Git credential helper? [Y/n]: ").strip().lower()

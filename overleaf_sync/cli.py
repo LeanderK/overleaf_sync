@@ -180,7 +180,7 @@ def cmd_status(args):
     # Sync health check: verify local repos match remote heads
     cfg = load_config() or prompt_first_run()
     if not cfg.git_token:
-        print("Git token missing. Run 'overleaf-sync set-git-token'.")
+        print("Git token missing. Run 'overleaf-pull set-git-token'.")
         return
     # Gather projects
     cookies = cfg.cookies if cfg.cookies else None
@@ -375,7 +375,7 @@ def cmd_browser_login_qt(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="overleaf-sync", description="Pull-only Overleaf project sync")
+    parser = argparse.ArgumentParser(prog="overleaf-pull", description="Pull-only Overleaf project sync")
     sub = parser.add_subparsers(dest="cmd")
 
     p_init = sub.add_parser("init", help="First-run setup and optional scheduler install")

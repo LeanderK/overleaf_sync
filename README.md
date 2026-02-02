@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 First Run (setup)
 ```bash
-overleaf-sync init --install
+overleaf-pull init --install
 # If the console script isn't found, use:
 # uv currently not working!
 # uv run python -m overleaf_sync.cli init --install
@@ -43,30 +43,30 @@ overleaf-sync init --install
 Manual Commands
 - Run once now:
 ```bash
-overleaf-sync run-once
+overleaf-pull run-once
 # Or via uv:
 uv run python -m overleaf_sync.cli run-once
 ```
 - Manual sync (with optional overrides):
 ```bash
-overleaf-sync sync --count 5 --base-dir ~/Overleaf --browser firefox
+overleaf-pull sync --count 5 --base-dir ~/Overleaf --browser firefox
 # Or via uv:
 uv run python -m overleaf_sync.cli sync --count 5 --base-dir ~/Overleaf --browser firefox
 ```
 - Store or clear cookies in config:
 - Folder naming preference:
 ```bash
-overleaf-sync set-name-suffix off   # Use display name only
-overleaf-sync set-name-suffix on    # Default: append a short ID to avoid collisions
+overleaf-pull set-name-suffix off   # Use display name only
+overleaf-pull set-name-suffix on    # Default: append a short ID to avoid collisions
 ```
 This affects the local folder names only; project display names on Overleaf remain unchanged.
 ```bash
-overleaf-sync set-cookie "name=value; other=value2"
-overleaf-sync clear-cookie
+overleaf-pull set-cookie "name=value; other=value2"
+overleaf-pull clear-cookie
 ```
 - Browser-assisted cookie capture (like olbrowserlogin):
 ```bash
-overleaf-sync browser-login
+overleaf-pull browser-login
 # This opens Overleaf in your browser and guides you to copy document.cookie.
 ```
 Required cookies
@@ -79,7 +79,7 @@ Qt browser login (optional)
 ```bash
 conda activate overleaf-sync
 conda install -c conda-forge pyside6
-overleaf-sync browser-login-qt
+overleaf-pull browser-login-qt
 ```
 - Pip/venv alternative:
 ```bash
@@ -92,21 +92,21 @@ Git authentication token
 - Overleaf requires a Git auth token for `git clone`/`git pull`.
 - Generate a token in your Overleaf account (see the Git integration/authentication tokens page or the Git instructions shown in your project UI), then set it:
 ```bash
-overleaf-sync set-git-token
+overleaf-pull set-git-token
 # Paste your token when prompted
 
 # Clear it if needed
-overleaf-sync clear-git-token
+overleaf-pull clear-git-token
 ```
 - With a token set, the tool will use URLs like `https://git:<TOKEN>@git.overleaf.com/<PROJECT_ID>` automatically.
 - Status from logs:
 ```bash
-overleaf-sync status
+overleaf-pull status
 ```
 - Install or remove background job:
 ```bash
-overleaf-sync install-scheduler
-overleaf-sync uninstall-scheduler
+overleaf-pull install-scheduler
+overleaf-pull uninstall-scheduler
 # Or via uv:
 uv run python -m overleaf_sync.cli install-scheduler
 uv run python -m overleaf_sync.cli uninstall-scheduler
@@ -114,12 +114,12 @@ uv run python -m overleaf_sync.cli uninstall-scheduler
 Installing the scheduler is idempotent: it uninstalls any existing instance first, then reinstalls to ensure only one scheduler is active.
 - Adjust interval or latest count:
 ```bash
-overleaf-sync set-interval 12h
-overleaf-sync set-count 20
+overleaf-pull set-interval 12h
+overleaf-pull set-count 20
 ```
 - Change base directory:
 ```bash
-overleaf-sync set-base-dir /path/to/Overleaf
+overleaf-pull set-base-dir /path/to/Overleaf
 ```
 
 macOS Logs
@@ -142,7 +142,7 @@ git config --global credential.helper libsecret     # Linux
 Background runs
 - To avoid interactive Git prompts in schedulers, set an Overleaf Git token once:
 ```bash
-overleaf-sync set-git-token
+overleaf-pull set-git-token
 ```
 - Without a token, new clones will fail with 403; existing repos may also fail if their remotes lack the token. Prompts are disabled in background.
 
