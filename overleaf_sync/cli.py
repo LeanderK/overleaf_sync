@@ -165,17 +165,65 @@ def _tail(path: str, lines: int = 50) -> list[str]:
 
 
 def cmd_status(args):
-    logs_dir = get_logs_dir()
-    app_log = os.path.join(logs_dir, "app.log")
-    runner_log = os.path.join(logs_dir, "runner.log")
-    runner_err = os.path.join(logs_dir, "runner.err.log")
-    print("Status (last 50 lines):")
-    for label, path in [("App", app_log), ("Runner", runner_log), ("RunnerErr", runner_err)]:
-        if os.path.exists(path):
-            print(f"--- {label}: {path} ---")
-            print("".join(_tail(path)))
+    # Sync health check: verify local repos match remote heads
+    cfg = load_config() or prompt_first_run()
+    if not cfg.git_token:
+        print("Git token missing. Run 'overleaf-sync set-git-token'.")
+        return
+    # Gather projects
+    cookies = cfg.cookies if cfg.cookies else None
+    if not cookies:
+        from .cookies import load_overleaf_cookies
+        cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
+    from .overleaf_api import create_api, list_projects_sorted_by_last_updated
+    api = create_api(cfg.host)
+    projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+
+    from .projects import folder_name_for
+    from .git_ops import ensure_remote, detect_default_branch, get_remote_branch_head, get_local_branch_head
+
+    issues = []
+    for p in projects:
+        pid = p.get("id")
+        name = p.get("name")
+        folder = folder_name_for(name, pid, cfg.append_id_suffix)
+        repo_path = os.path.join(cfg.base_dir, folder)
+        if not os.path.isdir(os.path.join(repo_path, ".git")):
+            issues.append(f"Missing local clone for '{name}' ({pid}) at {repo_path}")
+            continue
+        # Ensure remote configured with token
+        ensure_remote(repo_path, pid, cfg.git_token)
+        branch = detect_default_branch(repo_path)
+        rhead = get_remote_branch_head(repo_path, branch)
+        lhead = get_local_branch_head(repo_path, branch)
+        if not rhead or not lhead:
+            issues.append(f"Unable to determine heads for '{name}' ({pid}).")
+            continue
+        if rhead != lhead:
+            issues.append(f"Out of sync: '{name}' ({pid}) remote {rhead[:7]} != local {lhead[:7]}")
+
+    if not issues:
+        # Everything OK
+        logs_dir = get_logs_dir()
+        app_log = os.path.join(logs_dir, "app.log")
+        last_success = None
+        if os.path.exists(app_log):
+            lines = _tail(app_log, 200)
+            for line in reversed(lines):
+                line = line.strip()
+                if line.startswith("[") and "] Synced" in line:
+                    last_success = line
+                    break
+        if last_success:
+            print(f"Everything OK. {last_success}")
         else:
-            print(f"--- {label}: {path} (missing) ---")
+            print("Everything OK. No successful sync recorded yet.")
+        return
+
+    # Print issues only
+    print("Issues detected:")
+    for msg in issues:
+        print(f"- {msg}")
 
 
 def cmd_browser_login(args):

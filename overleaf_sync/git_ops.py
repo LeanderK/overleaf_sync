@@ -111,6 +111,32 @@ def pull_remote(path: str, branch: str) -> None:
         raise RuntimeError(f"git pull failed: {combined.splitlines()[-1] if combined else 'unknown error'}")
 
 
+def get_remote_branch_head(path: str, branch: str) -> Optional[str]:
+    """Return the remote branch head commit SHA for the given branch, or None if not found."""
+    ref = f"refs/heads/{branch}"
+    print(f"$ git ls-remote {REMOTE_NAME} {ref}")
+    res = _run(["git", "ls-remote", REMOTE_NAME, ref], cwd=path)
+    if res.returncode != 0:
+        return None
+    line = (res.stdout or "").strip()
+    if not line:
+        return None
+    sha = line.split("\t")[0]
+    return sha or None
+
+
+def get_local_branch_head(path: str, branch: str) -> Optional[str]:
+    """Return the local branch head commit SHA, or HEAD if branch missing."""
+    res = _run(["git", "rev-parse", f"refs/heads/{branch}"], cwd=path)
+    if res.returncode == 0:
+        return (res.stdout or "").strip() or None
+    # Fallback to HEAD
+    res2 = _run(["git", "rev-parse", "HEAD"], cwd=path)
+    if res2.returncode == 0:
+        return (res2.stdout or "").strip() or None
+    return None
+
+
 def enable_git_helper(os_name: str) -> None:
     if os_name == "Darwin":
         _run(["git", "config", "--global", "credential.helper", "osxkeychain"]) 
