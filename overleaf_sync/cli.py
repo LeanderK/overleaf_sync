@@ -3,9 +3,10 @@ import webbrowser
 import os
 import platform
 import sys
+import concurrent.futures
 
 from .config import load_config, prompt_first_run, save_config, Config, get_logs_dir
-from .sync import run_sync_once, run_sync
+from .sync import run_sync_once, run_sync, run_sync_validate_first
 from .scheduler import install_macos_launchagent, uninstall_macos_launchagent, install_systemd_user, uninstall_systemd_user
 from .olbrowser_login import login_via_qt
 
@@ -30,25 +31,36 @@ def install_scheduler(cfg: Config):
         install_systemd_user(interval)
 
 
-def cmd_install(args):
-    cfg = load_config() or prompt_first_run()
-    # Run a manual sync first to validate config and access
-    try:
-        print("Running a validation sync before installing scheduler...")
-        run_sync(cfg)
-    except Exception as e:
-        print(f"Validation sync failed: {e}")
-        print("Not installing scheduler. Fix the issue and retry.")
-        return
-    install_scheduler(cfg)
-
-
-def cmd_uninstall(args):
+def uninstall_scheduler():
     os_name = platform.system()
     if os_name == "Darwin":
         uninstall_macos_launchagent()
     else:
         uninstall_systemd_user()
+
+
+def cmd_install(args):
+    cfg = load_config() or prompt_first_run()
+    # Run a manual sync first to validate config and access
+    try:
+        print("Running a validation sync before installing scheduler...")
+        run_sync_validate_first(cfg)
+    except Exception as e:
+        print(f"Validation sync failed: {e}")
+        print("Not installing scheduler. Fix the issue and retry.")
+        return
+    # Uninstall any existing scheduler instance, then install fresh
+    print("Ensuring scheduler is installed exactly once (uninstalling any existing instance)...")
+    try:
+        uninstall_scheduler()
+    except Exception:
+        # Ignore uninstall errors (e.g., not installed)
+        pass
+    install_scheduler(cfg)
+
+
+def cmd_uninstall(args):
+    uninstall_scheduler()
 
 
 def cmd_run_once(args):
@@ -182,40 +194,58 @@ def cmd_status(args):
     from .projects import folder_name_for
     from .git_ops import ensure_remote, detect_default_branch, get_remote_branch_head, get_local_branch_head
 
-    issues = []
+    total = len(projects)
+    if total == 0:
+        print("No projects found.")
+        return
+    print(f"Checking status for {total} latest project(s)...", flush=True)
+
+    def _check(p: dict):
+        pid = p.get("id")
+        name = p.get("name")
+        folder = folder_name_for(name, pid)
+        repo_path = os.path.join(cfg.base_dir, folder)
+        if not os.path.isdir(os.path.join(repo_path, ".git")):
+            return ("missing", f"Missing: {name}")
+        try:
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            if not rhead or not lhead:
+                return ("outdated", f"Outdated: {name} (unable to determine heads)")
+            if rhead != lhead:
+                return ("outdated", f"Outdated: {name} (remote {rhead[:7]} vs local {lhead[:7]})")
+            return ("up", None)
+        except Exception as e:
+            return ("outdated", f"Outdated: {name} (error: {e})")
+
     up_to_date = 0
     missing = 0
     outdated = 0
-    for p in projects:
-        pid = p.get("id")
-        name = p.get("name")
-        folder = folder_name_for(name, pid, cfg.append_id_suffix)
-        repo_path = os.path.join(cfg.base_dir, folder)
-        if not os.path.isdir(os.path.join(repo_path, ".git")):
-            missing += 1
-            issues.append(f"Missing: {name}")
-            continue
-        # Ensure remote configured with token
-        ensure_remote(repo_path, pid, cfg.git_token)
-        branch = detect_default_branch(repo_path)
-        rhead = get_remote_branch_head(repo_path, branch)
-        lhead = get_local_branch_head(repo_path, branch)
-        if not rhead or not lhead:
-            outdated += 1
-            issues.append(f"Outdated: {name} (unable to determine heads)")
-            continue
-        if rhead != lhead:
-            outdated += 1
-            issues.append(f"Outdated: {name} (remote {rhead[:7]} vs local {lhead[:7]})")
-        else:
-            up_to_date += 1
-
-    total = len(projects)
+    issues: list[str] = []
+    done = 0
+    max_workers = min(16, total)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_check, p) for p in projects]
+        for fut in concurrent.futures.as_completed(futures):
+            status, msg = fut.result()
+            done += 1
+            if status == "up":
+                up_to_date += 1
+            elif status == "missing":
+                missing += 1
+                if msg:
+                    issues.append(msg)
+            else:
+                outdated += 1
+                if msg:
+                    issues.append(msg)
     print(f"Summary: {up_to_date}/{total} up to date, {missing}/{total} missing, {outdated}/{total} outdated.")
 
     # Identify old projects (not in latest set)
     from .projects import folder_name_for
-    expected = {folder_name_for(p.get("name"), p.get("id"), cfg.append_id_suffix) for p in projects}
+    expected = {folder_name_for(p.get("name"), p.get("id")) for p in projects}
     old_repos = []
     for entry in os.listdir(cfg.base_dir):
         path = os.path.join(cfg.base_dir, entry)
@@ -251,6 +281,9 @@ def cmd_status(args):
         # Everything OK
         logs_dir = get_logs_dir()
         app_log = os.path.join(logs_dir, "app.log")
+        runner_log = os.path.join(logs_dir, "runner.log")
+        runner_err = os.path.join(logs_dir, "runner.err.log")
+        has_runner_logs = (os.path.exists(runner_log) or os.path.exists(runner_err))
         last_success = None
         if os.path.exists(app_log):
             lines = _tail(app_log, 200)
@@ -259,10 +292,15 @@ def cmd_status(args):
                 if line.startswith("[") and "] Synced" in line:
                     last_success = line
                     break
-        if last_success:
-            print(f"Everything OK. {last_success}")
+        if last_success and has_runner_logs:
+            print(f"Background runner OK. {last_success}")
+        elif last_success:
+            print(f"Manual sync OK. {last_success}")
         else:
-            print("Everything OK. No successful sync recorded yet.")
+            if has_runner_logs:
+                print("Everything OK. No successful sync recorded yet.")
+            else:
+                print("Everything OK. No background runs recorded yet.")
         return
 
     # Print brief issues overview

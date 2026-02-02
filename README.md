@@ -13,8 +13,9 @@ Requirements
 
 Install
 ```bash
-# Using uv (recommended)
-uv sync
+# # Using uv (recommended)
+# uv currently not working!
+# uv sync
 
 # Or using conda
 conda env create -f environment.yml
@@ -30,10 +31,12 @@ First Run (setup)
 ```bash
 overleaf-sync init --install
 # If the console script isn't found, use:
-uv run python -m overleaf_sync.cli init --install
+# uv currently not working!
+# uv run python -m overleaf_sync.cli init --install
 ```
 - Prompts for the base directory, interval (1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
-- Prompts for your Overleaf Git authentication token (required for cloning/pulling and background runs).
+- Offers a Qt browser login to capture cookies automatically (default Yes if PySide6 is installed). Falls back to optional manual cookie paste.
+- Prompts for your Overleaf Git authentication token (required for cloning/pulling and background runs). It will offer to open Overleaf in your browser to fetch it.
 - Installs a background job (LaunchAgent on macOS, systemd user timer on Linux).
 - Runs a validation sync before installing the scheduler, to confirm access.
 
@@ -83,6 +86,7 @@ overleaf-sync browser-login-qt
 pip install PySide6
 python -m overleaf_sync.cli browser-login-qt
 ```
+During setup, if PySide6 is present, the tool will offer the Qt login flow by default.
 
 Git authentication token
 - Overleaf requires a Git auth token for `git clone`/`git pull`.
@@ -107,6 +111,7 @@ overleaf-sync uninstall-scheduler
 uv run python -m overleaf_sync.cli install-scheduler
 uv run python -m overleaf_sync.cli uninstall-scheduler
 ```
+Installing the scheduler is idempotent: it uninstalls any existing instance first, then reinstalls to ensure only one scheduler is active.
 - Adjust interval or latest count:
 ```bash
 overleaf-sync set-interval 12h

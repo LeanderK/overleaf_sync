@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import webbrowser
 from dataclasses import dataclass, asdict
 from typing import Optional, Tuple, Dict
 
@@ -121,6 +122,23 @@ def prompt_first_run() -> Config:
     host_in = input("Overleaf host [www.overleaf.com]: ").strip()
     host = host_in or "www.overleaf.com"
 
+    # Prefer Qt browser login to capture cookies automatically (if available)
+    cookies: Optional[Dict[str, str]] = None
+    try_qt = input("Use Qt browser to login and auto-capture cookies now? [Y/n]: ").strip().lower()
+    if try_qt != "n":
+        try:
+            from .olbrowser_login import login_via_qt
+            store = login_via_qt()
+            if store and store.get("cookie"):
+                cookies = store.get("cookie")
+                print("Stored cookies from Qt browser login.")
+            else:
+                print("Qt login did not complete; skipping.")
+        except RuntimeError as e:
+            print(str(e))
+        except Exception:
+            print("Qt login failed; you can set cookies later via 'overleaf-sync set-cookie'.")
+
     # Git helper
     git_helper_ans = input("Enable OS Git credential helper? [Y/n]: ").strip().lower()
     git_helper = (git_helper_ans != "n")
@@ -128,6 +146,12 @@ def prompt_first_run() -> Config:
     # Git token (required for cloning/pulling)
     print("Overleaf now requires a Git authentication token for cloning/pulling.")
     print("Find it via your Overleaf project's Git panel or account settings.")
+    open_help = input("Open Overleaf in your browser to fetch the token now? [Y/n]: ").strip().lower()
+    if open_help != "n":
+        try:
+            webbrowser.open(f"https://{host}/project")
+        except Exception:
+            pass
     git_token = ""
     while not git_token:
         git_token = input("Enter Overleaf Git token (required): ").strip()
@@ -138,23 +162,23 @@ def prompt_first_run() -> Config:
     ans = input("Append short project ID to folder names to avoid collisions? [Y/n]: ").strip().lower()
     append_id_suffix = (ans != "n")
 
-    # Optional: paste Overleaf cookies (JSON map or Cookie header)
-    print("Optional: paste Overleaf cookies to avoid browser access (press Enter to skip).")
-    cookie_in = input("Cookies (JSON map or 'name=value; name2=value2'): ").strip()
-    cookies: Optional[Dict[str, str]] = None
-    if cookie_in:
-        from .cookies import parse_cookie_string
-        try:
-            cookies = parse_cookie_string(cookie_in)
-        except Exception:
+    # Optional: paste Overleaf cookies (JSON map or Cookie header) if not captured
+    if not cookies:
+        print("Optional: paste Overleaf cookies to avoid browser access (press Enter to skip).")
+        cookie_in = input("Cookies (JSON map or 'name=value; name2=value2'): ").strip()
+        if cookie_in:
+            from .cookies import parse_cookie_string
             try:
-                # Try JSON
-                import json as _json
-                data = _json.loads(cookie_in)
-                if isinstance(data, dict):
-                    cookies = {str(k): str(v) for k, v in data.items()}
+                cookies = parse_cookie_string(cookie_in)
             except Exception:
-                cookies = None
+                try:
+                    # Try JSON
+                    import json as _json
+                    data = _json.loads(cookie_in)
+                    if isinstance(data, dict):
+                        cookies = {str(k): str(v) for k, v in data.items()}
+                except Exception:
+                    cookies = None
 
     cfg = Config(
         base_dir=base_dir,
