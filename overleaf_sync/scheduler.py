@@ -19,20 +19,26 @@ def _python_exec() -> str:
     return os.environ.get("PYTHON", "python3")
 
 
-def _cli_entry() -> list[str]:
-    # Use module invocation to avoid packaging complexities
-    return [_python_exec(), "-m", "overleaf_sync.cli", "run-once"]
+def _cli_entry(mode: str = "dynamic") -> list[str]:
+    """Return ProgramArguments for the scheduler.
+
+    mode: 'dynamic' runs selective due projects; 'full' runs a full sync.
+    """
+    if mode == "full":
+        return [_python_exec(), "-m", "overleaf_sync.cli", "sync"]
+    # default dynamic: drive per-project timers
+    return [_python_exec(), "-m", "overleaf_sync.cli", "run-once-dynamic"]
 
 
-def install_macos_launchagent(interval: str):
+def install_macos_launchagent(interval: str, mode: str = "dynamic"):
     os.makedirs(LAUNCHAGENTS_DIR, exist_ok=True)
-    start_interval = {"1h": 3600, "12h": 43200, "24h": 86400}.get(interval, 3600)
+    start_interval = {"30m": 1800, "1h": 3600, "12h": 43200, "24h": 86400}.get(interval, 3600)
     support, logs_dir, _ = get_app_paths()
     os.makedirs(logs_dir, exist_ok=True)
     stdout = os.path.join(logs_dir, "runner.log")
     stderr = os.path.join(logs_dir, "runner.err.log")
 
-    args = _cli_entry()
+    args = _cli_entry(mode)
     program_arguments_xml = "\n".join([f"\t\t<string>{a}</string>" for a in args])
 
     plist = f"""
@@ -76,9 +82,9 @@ def uninstall_macos_launchagent():
         print(f"Removed {plist_path}")
 
 
-def install_systemd_user(interval: str):
+def install_systemd_user(interval: str, mode: str = "dynamic"):
     os.makedirs(SYSTEMD_USER_DIR, exist_ok=True)
-    args = " ".join(_cli_entry())
+    args = " ".join(_cli_entry(mode))
     service = f"""
 [Unit]
 Description=Overleaf Sync pull-only job
@@ -87,7 +93,9 @@ Description=Overleaf Sync pull-only job
 Type=oneshot
 ExecStart={args}
 """
-    if interval == "1h":
+    if interval == "30m":
+        on_calendar = "*-*-* *:00,30:00"
+    elif interval == "1h":
         on_calendar = "hourly"
     elif interval == "12h":
         on_calendar = "*-*-* 00,12:00:00"

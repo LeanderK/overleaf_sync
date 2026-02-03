@@ -33,7 +33,7 @@ Quick Setup
 ```bash
 overleaf-pull init --install
 ```
-- Prompts for the base directory, interval (1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
+ - Prompts for the base directory, interval (30m/1h/12h/24h), count (default 10), browser/profile, and host (default www.overleaf.com).
 - Offers a Qt browser login to capture cookies automatically (default Yes if PySide6 is installed). Falls back to optional manual cookie paste.
 - Prompts for your Overleaf Git authentication token (required for cloning/pulling and background runs). It will offer to open Overleaf in your browser to fetch it.
 - Installs a background job (LaunchAgent on macOS, systemd user timer on Linux).
@@ -87,10 +87,12 @@ overleaf-pull set-git-token
 overleaf-pull clear-git-token
 ```
 - With a token set, the tool will use URLs like `https://git:<TOKEN>@git.overleaf.com/<PROJECT_ID>` automatically.
-- Status from logs:
+- Status & timers:
 ```bash
 overleaf-pull status
 ```
+ - Shows a summary of repo health and the last background run.
+ - Displays per-project timers indicating when each is next due.
 - Install or remove background job:
 ```bash
 overleaf-pull install-scheduler
@@ -107,7 +109,7 @@ git push origin v0.1.0
 - The workflow builds sdist/wheel and publishes without storing secrets.
 - Adjust interval or latest count:
 ```bash
-overleaf-pull set-interval 12h
+overleaf-pull set-interval 30m
 overleaf-pull set-count 20
 ```
 - Change base directory:
@@ -138,6 +140,13 @@ Background runs
 overleaf-pull set-git-token
 ```
 - Without a token, new clones will fail with 403; existing repos may also fail if their remotes lack the token. Prompts are disabled in background.
+
+Dynamic scheduling (per-project backoff)
+- The background worker runs on a frequent cadence (e.g., every 30 minutes).
+- Each project has its own timer with exponential backoff:
+	- Minimum interval: 30 minutes. Doubles on no changes, up to 24 hours.
+	- Resets to 30 minutes when changes are detected and pulled.
+- The `status` command shows the next-due times for the latest projects.
 
 Development
 - Create a local environment and install from source:

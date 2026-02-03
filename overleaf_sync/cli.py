@@ -22,13 +22,16 @@ def cmd_init(args):
         install_scheduler(cfg)
 
 
-def install_scheduler(cfg: Config):
+def install_scheduler(cfg: Config, mode: str = "dynamic"):
     os_name = platform.system()
     interval = cfg.sync_interval
     if os_name == "Darwin":
-        install_macos_launchagent(interval)
+        install_macos_launchagent(interval, mode)
     else:
-        install_systemd_user(interval)
+        install_systemd_user(interval, mode)
+    # Persist chosen mode for status reporting
+    cfg.scheduler_mode = mode
+    save_config(cfg)
 
 
 def uninstall_scheduler():
@@ -56,7 +59,8 @@ def cmd_install(args):
     except Exception:
         # Ignore uninstall errors (e.g., not installed)
         pass
-    install_scheduler(cfg)
+    mode = getattr(args, "mode", "dynamic")
+    install_scheduler(cfg, mode)
 
 
 def cmd_uninstall(args):
@@ -64,7 +68,14 @@ def cmd_uninstall(args):
 
 
 def cmd_run_once(args):
+    # Manual run always full sync
     run_sync_once()
+
+def cmd_run_once_dynamic(args):
+    # Dynamic, selective, for scheduler use only
+    cfg = load_config() or prompt_first_run()
+    from .sync import due_run
+    due_run(cfg)
 def cmd_sync(args):
     cfg = load_config() or prompt_first_run()
     # Apply one-off overrides
@@ -83,8 +94,8 @@ def cmd_sync(args):
 def cmd_set_interval(args):
     cfg = load_config() or prompt_first_run()
     val = args.interval
-    if val not in ("1h", "12h", "24h"):
-        print("Invalid interval; choose 1h, 12h, or 24h")
+    if val not in ("30m", "1h", "12h", "24h"):
+        print("Invalid interval; choose 30m, 1h, 12h, or 24h")
         sys.exit(2)
     cfg.sync_interval = val
     save_config(cfg)
@@ -284,6 +295,18 @@ def cmd_status(args):
         runner_log = os.path.join(logs_dir, "runner.log")
         runner_err = os.path.join(logs_dir, "runner.err.log")
         has_runner_logs = (os.path.exists(runner_log) or os.path.exists(runner_err))
+        # Optional: show last background worker run time
+        last_run = None
+        try:
+            candidates = [p for p in (runner_log, runner_err) if os.path.exists(p)]
+            if candidates:
+                mtimes = [(p, os.path.getmtime(p)) for p in candidates]
+                last_run = max(mtimes, key=lambda x: x[1])[1]
+        except Exception:
+            last_run = None
+        # Show scheduler configuration
+        mode = getattr(cfg, "scheduler_mode", "dynamic")
+        print(f"Scheduler: interval={cfg.sync_interval}, mode={mode}")
         last_success = None
         if os.path.exists(app_log):
             lines = _tail(app_log, 200)
@@ -294,6 +317,13 @@ def cmd_status(args):
                     break
         if last_success and has_runner_logs:
             print(f"Background runner OK. {last_success}")
+            if last_run:
+                try:
+                    import datetime as _dt
+                    ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
+                    print(f"Last worker run: {ts}")
+                except Exception:
+                    pass
         elif last_success:
             print(f"Manual sync OK. {last_success}")
         else:
@@ -301,6 +331,35 @@ def cmd_status(args):
                 print("Everything OK. No successful sync recorded yet.")
             else:
                 print("Everything OK. No background runs recorded yet.")
+        # Show per-project timers (next due) if available
+        try:
+            from .config import load_schedule_state
+            st = load_schedule_state()
+            projs = st.get("projects", {})
+            if projs:
+                import time as _time
+                items = []
+                for pid, ent in projs.items():
+                    nd = int(ent.get("next_due_ts", 0) or 0)
+                    items.append((nd, ent.get("name") or pid))
+                items.sort(key=lambda x: x[0])
+                print("Timers (next due):")
+                now_ts = int(_time.time())
+                for nd, nm in items[:10]:
+                    delta = nd - now_ts
+                    if delta <= 0:
+                        status = "due now"
+                    else:
+                        # Simple humanized minutes/hours
+                        mins = delta // 60
+                        if mins < 60:
+                            status = f"in {mins}m"
+                        else:
+                            hrs = mins // 60
+                            status = f"in {hrs}h"
+                    print(f"- {nm}: {status}")
+        except Exception:
+            pass
         return
 
     # Print brief issues overview
@@ -383,13 +442,18 @@ def main():
     p_init.set_defaults(func=cmd_init)
 
     p_install = sub.add_parser("install-scheduler", help="Install background scheduler (LaunchAgent/systemd)")
+    p_install.add_argument("--mode", choices=["dynamic", "full"], default="dynamic", help="Scheduler run mode: dynamic (per-project timers) or full (always sync all)")
     p_install.set_defaults(func=cmd_install)
 
     p_uninstall = sub.add_parser("uninstall-scheduler", help="Uninstall background scheduler")
     p_uninstall.set_defaults(func=cmd_uninstall)
 
-    p_run = sub.add_parser("run-once", help="Run a single pull-only sync now")
+    p_run = sub.add_parser("run-once", help="Run a single pull-only sync now (always full)")
     p_run.set_defaults(func=cmd_run_once)
+
+    # Hidden entry for scheduler dynamic mode
+    p_run_dyn = sub.add_parser("run-once-dynamic")
+    p_run_dyn.set_defaults(func=cmd_run_once_dynamic)
 
     p_sync = sub.add_parser("sync", help="Manual sync with optional overrides")
     p_sync.add_argument("--count", type=int, help="Override latest projects count for this run")
@@ -398,8 +462,8 @@ def main():
     p_sync.add_argument("--profile", help="Override profile for this run")
     p_sync.set_defaults(func=cmd_sync)
 
-    p_si = sub.add_parser("set-interval", help="Set sync interval (1h|12h|24h)")
-    p_si.add_argument("interval", choices=["1h", "12h", "24h"])
+    p_si = sub.add_parser("set-interval", help="Set sync interval (30m|1h|12h|24h)")
+    p_si.add_argument("interval", choices=["30m", "1h", "12h", "24h"])
     p_si.set_defaults(func=cmd_set_interval)
 
     p_sc = sub.add_parser("set-count", help="Set latest projects count")

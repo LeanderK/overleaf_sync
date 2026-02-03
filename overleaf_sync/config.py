@@ -19,6 +19,7 @@ class Config:
     cookies: Optional[Dict[str, str]] = None
     git_token: Optional[str] = None
     append_id_suffix: bool = True
+    scheduler_mode: str = "dynamic"  # dynamic|full
 
 
 def _mac_paths() -> Tuple[str, str, str]:
@@ -62,6 +63,44 @@ def get_cache_dir() -> str:
     _, _, caches = get_app_paths()
     os.makedirs(caches, exist_ok=True)
     return caches
+
+
+def get_state_path() -> str:
+    """Return path to the dynamic scheduling state file (JSON)."""
+    support, _, _ = get_app_paths()
+    os.makedirs(support, exist_ok=True)
+    return os.path.join(support, "schedule_state.json")
+
+
+def load_schedule_state() -> dict:
+    """Load the dynamic scheduling state JSON. Returns an object with keys:
+    - version: int
+    - projects: { project_id: { name, folder, interval_sec, next_due_ts } }
+    """
+    path = get_state_path()
+    if not os.path.exists(path):
+        return {"version": 1, "projects": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {"version": 1, "projects": {}}
+        data.setdefault("version", 1)
+        data.setdefault("projects", {})
+        return data
+    except Exception:
+        return {"version": 1, "projects": {}}
+
+
+def save_schedule_state(state: dict) -> None:
+    """Persist dynamic scheduling state JSON to disk."""
+    path = get_state_path()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        # Non-fatal; ignore write errors for now
+        pass
 
 
 def load_config() -> Optional[Config]:

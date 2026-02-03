@@ -21,6 +21,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Show package version
+        run: |
+          python - << 'PY'
+          import tomllib
+          with open('pyproject.toml','rb') as f:
+              data = tomllib.load(f)
+          print('Version from pyproject.toml:', data['project']['version'])
+          PY
+
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
