@@ -23,7 +23,7 @@ dependencies = [
 qt = ["PySide6>=6.6"]
 
 [project.scripts]
-overleaf-pull = "overleaf_sync.cli:main"
+overleaf-pull = "overleaf_pull.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/LeanderK/overleaf_sync"
@@ -34,10 +34,10 @@ package = true
 # uv will install from [project] dependencies
 
 [tool.hatch.build.targets.wheel]
-packages = ["overleaf_sync"]
+packages = ["overleaf_pull"]
 
 [tool.hatch.build.targets.sdist]
-include = ["overleaf_sync/**", "README.md", "pyproject.toml"]
+include = ["overleaf_pull/**", "README.md", "pyproject.toml"]
 
 [build-system]
 requires = ["hatchling"]

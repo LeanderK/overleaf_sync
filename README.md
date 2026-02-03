@@ -157,11 +157,11 @@ overleaf-pull set-base-dir /path/to/Overleaf
 ```
 
 macOS Logs
-- Logs: ~/Library/Logs/overleaf_sync/runner.log
+- Logs: ~/Library/Logs/overleaf_pull/runner.log
 
 Linux Logs
-- `journalctl --user -u overleaf-sync.timer -u overleaf-sync.service`
-- And ~/.local/state/overleaf_sync/logs/ if configured.
+- `journalctl --user -u overleaf-pull.timer -u overleaf-pull.service`
+- And ~/.local/state/overleaf_pull/logs/ if configured.
 
 Notes
 - This tool is pull-only; it never pushes to Overleaf.

@@ -5,7 +5,7 @@ import webbrowser
 from dataclasses import dataclass, asdict
 from typing import Optional, Tuple, Dict
 
-APP_NAME = "overleaf_sync"
+APP_NAME = "overleaf_pull"
 
 @dataclass
 class Config:
