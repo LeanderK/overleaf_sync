@@ -1,13 +1,31 @@
 # Overleaf Pull-Only Sync CLI
 ![PyPI - Version](https://img.shields.io/pypi/v/overleaf-pull)
 
-Quick Start (users)
-```bash
-# Install with Qt login support
-pip install 'overleaf-pull[qt]'
+This project introduces a small background worker that keeps and up-to-date copy your the last active overleaf projects offline (by default the last 10). There's also a handy manual sync command to pull the updates manually. This project is not an automatic two-way merge! It works by pulling via the git-integration, making it save from accidentially pushing work in progress.
 
-# Guided setup and background install
+**For Users — Quick Start**
+Install and setup
+```bash
+pip install 'overleaf-pull[qt]'
 overleaf-pull init --install
+```
+
+Manual sync and status
+```bash
+overleaf-pull run-once   # full sync now
+overleaf-pull status     # health + last run + timers
+```
+
+Customize (optional)
+```bash
+# Scheduler cadence and mode (dynamic by default)
+overleaf-pull set-interval 30m
+overleaf-pull install-scheduler --mode dynamic   # or --mode full
+
+# Other knobs
+overleaf-pull set-count 20
+overleaf-pull set-base-dir /path/to/Overleaf
+overleaf-pull set-git-token   # set once to avoid prompts
 ```
 
 Overview
@@ -22,14 +40,16 @@ Requirements
 - Dependencies are installed automatically via pip. Optional extras: `[qt]` for PySide6 (Qt login).
 - Overleaf Git integration enabled on your account to allow cloning/pulling via git.overleaf.com.
 
-Install (pip)
+Details for Users
+
+Install
 ```bash
 pip install overleaf-pull
 # Optional Qt login support:
 pip install 'overleaf-pull[qt]'
 ```
 
-Quick Setup
+Setup Wizard
 ```bash
 overleaf-pull init --install
 ```
@@ -39,11 +59,12 @@ overleaf-pull init --install
 - Installs a background job (LaunchAgent on macOS, systemd user timer on Linux).
 - Runs a validation sync before installing the scheduler, to confirm access.
 
-Manual Commands
+Manual Sync
 Run once now:
 ```bash
 overleaf-pull run-once
 ```
+ - Runs a full sync of the latest projects (not dynamic).
 - Manual sync (with optional overrides):
 ```bash
 overleaf-pull sync --count 5 --base-dir ~/Overleaf --browser firefox
@@ -87,18 +108,36 @@ overleaf-pull set-git-token
 overleaf-pull clear-git-token
 ```
 - With a token set, the tool will use URLs like `https://git:<TOKEN>@git.overleaf.com/<PROJECT_ID>` automatically.
-- Status & timers:
+Status
 ```bash
 overleaf-pull status
 ```
  - Shows a summary of repo health and the last background run.
  - Displays per-project timers indicating when each is next due.
+ - Prints the current scheduler configuration: interval and mode (dynamic/full).
+Customize
 - Install or remove background job:
 ```bash
 overleaf-pull install-scheduler
 overleaf-pull uninstall-scheduler
 ```
+Scheduler modes
+- The scheduler supports two modes:
+	- dynamic: Runs only projects that are due based on per-project backoff (min 30m, doubles until 24h; resets to 30m on changes).
+	- full: Always runs a full sync on each trigger.
+- Examples:
+```bash
+# 30-minute dynamic cadence
+overleaf-pull set-interval 30m
+overleaf-pull install-scheduler --mode dynamic
+
+# 30-minute full cadence
+overleaf-pull set-interval 30m
+overleaf-pull install-scheduler --mode full
+```
 Installing the scheduler is idempotent: it uninstalls any existing instance first, then reinstalls to ensure only one scheduler is active.
+**For Developers**
+
 Publish to PyPI (CI)
 - This repo includes a GitHub Actions workflow that publishes on tags `v*` using PyPI Trusted Publishers (OIDC).
 - Trigger a release:
