@@ -1,6 +1,6 @@
 [project]
 name = "overleaf-pull"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pull-only Overleaf project sync using PyOverleaf"
 authors = [{ name = "Leander Kurscheidt" }]
 readme = "README.md"

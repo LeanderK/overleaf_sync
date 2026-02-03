@@ -213,7 +213,9 @@ def cmd_status(args):
 
     def _check(p: dict):
         pid = p.get("id")
-        name = p.get("name")
+        name = p.get("name") or ""
+        if not isinstance(pid, str) or not pid:
+            return ("outdated", f"Invalid project entry (missing id) for {name or '(unknown)'}")
         folder = folder_name_for(name, pid)
         repo_path = os.path.join(cfg.base_dir, folder)
         if not os.path.isdir(os.path.join(repo_path, ".git")):
@@ -256,7 +258,12 @@ def cmd_status(args):
 
     # Identify old projects (not in latest set)
     from .projects import folder_name_for
-    expected = {folder_name_for(p.get("name"), p.get("id")) for p in projects}
+    expected = set()
+    for p in projects:
+        pid = p.get("id")
+        name = p.get("name") or ""
+        if isinstance(pid, str) and pid:
+            expected.add(folder_name_for(name, pid))
     old_repos = []
     for entry in os.listdir(cfg.base_dir):
         path = os.path.join(cfg.base_dir, entry)
@@ -307,6 +314,15 @@ def cmd_status(args):
         # Show scheduler configuration
         mode = getattr(cfg, "scheduler_mode", "dynamic")
         print(f"Scheduler: interval={cfg.sync_interval}, mode={mode}")
+        # Detect offline runner skip
+        offline_msg = None
+        if os.path.exists(app_log):
+            lines = _tail(app_log, 50)
+            for line in reversed(lines):
+                line = line.strip()
+                if "] Runner skipped (no internet)" in line:
+                    offline_msg = line
+                    break
         last_success = None
         if os.path.exists(app_log):
             lines = _tail(app_log, 200)
@@ -315,7 +331,30 @@ def cmd_status(args):
                 if line.startswith("[") and "] Synced" in line:
                     last_success = line
                     break
-        if last_success and has_runner_logs:
+        # Compute next worker run time (approximate)
+        next_run_str = None
+        try:
+            interval_map = {"30m": 1800, "1h": 3600, "12h": 43200, "24h": 86400}
+            iv = interval_map.get(cfg.sync_interval, 3600)
+            if last_run:
+                import datetime as _dt
+                nr = last_run + iv
+                next_run_str = _dt.datetime.fromtimestamp(nr).isoformat(timespec='seconds')
+        except Exception:
+            next_run_str = None
+
+        if offline_msg and has_runner_logs:
+            print(f"Background runner STALE (offline). {offline_msg}")
+            if last_run:
+                try:
+                    import datetime as _dt
+                    ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
+                    print(f"Last worker run: {ts}")
+                except Exception:
+                    pass
+            if next_run_str:
+                print(f"Worker next run: {next_run_str} (approx)")
+        elif last_success and has_runner_logs:
             print(f"Background runner OK. {last_success}")
             if last_run:
                 try:
@@ -324,6 +363,8 @@ def cmd_status(args):
                     print(f"Last worker run: {ts}")
                 except Exception:
                     pass
+            if next_run_str:
+                print(f"Worker next run: {next_run_str} (approx)")
         elif last_success:
             print(f"Manual sync OK. {last_success}")
         else:
@@ -341,14 +382,26 @@ def cmd_status(args):
                 items = []
                 for pid, ent in projs.items():
                     nd = int(ent.get("next_due_ts", 0) or 0)
-                    items.append((nd, ent.get("name") or pid))
+                    interval = int(ent.get("interval_sec", 1800) or 1800)
+                    items.append((nd, ent.get("name") or pid, interval))
                 items.sort(key=lambda x: x[0])
                 print("Timers (next due):")
                 now_ts = int(_time.time())
-                for nd, nm in items[:10]:
+                for nd, nm, interval in items[:10]:
                     delta = nd - now_ts
+                    # Absolute timestamp for the scheduled refresh
+                    try:
+                        import datetime as _dt
+                        ts = _dt.datetime.fromtimestamp(nd).isoformat(timespec='seconds')
+                    except Exception:
+                        ts = str(nd)
                     if delta <= 0:
-                        status = "due now"
+                        # If overdue by more than interval, mark stale
+                        overdue = -delta
+                        if overdue > interval:
+                            status = f"stale (overdue by {overdue//3600}h)"
+                        else:
+                            status = "due now"
                     else:
                         # Simple humanized minutes/hours
                         mins = delta // 60
@@ -357,7 +410,8 @@ def cmd_status(args):
                         else:
                             hrs = mins // 60
                             status = f"in {hrs}h"
-                    print(f"- {nm}: {status}")
+                    # Include concrete scheduled time
+                    print(f"- {nm}: {status} (scheduled {ts})")
         except Exception:
             pass
         return

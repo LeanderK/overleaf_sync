@@ -1,5 +1,6 @@
 import platform
 import os
+import socket
 from datetime import datetime
 from .config import load_config, prompt_first_run, Config, get_logs_dir, load_schedule_state, save_schedule_state
 from .cookies import load_overleaf_cookies
@@ -13,6 +14,8 @@ from .git_ops import (
     enable_git_helper,
     is_worktree_clean,
     has_unpushed_commits,
+    get_remote_branch_head,
+    get_local_branch_head,
 )
 
 
@@ -33,6 +36,18 @@ def run_sync(cfg: Config):
 
     projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
 
+    # Fast-fail on no internet for manual sync. Log only; do not adjust timers.
+    if not _has_internet(cfg):
+        _log_manual_offline()
+        raise RuntimeError("No internet connectivity to Overleaf/git; aborted full sync.")
+    # Load schedule state to adjust timers based on manual sync outcome
+    state = load_schedule_state()
+    proj_state = state.setdefault("projects", {})
+    import time as _time
+    now = int(_time.time())
+    MIN_SEC = 1800
+    MAX_SEC = 86400
+
     for p in projects:
         pid = p["id"]
         name = p["name"]
@@ -46,7 +61,29 @@ def run_sync(cfg: Config):
         repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
         ensure_remote(repo_path, pid, cfg.git_token)
         branch = detect_default_branch(repo_path)
+        # Determine if changes are present before pulling
+        rhead = get_remote_branch_head(repo_path, branch)
+        lhead = get_local_branch_head(repo_path, branch)
+        changed = needs_clone or (rhead != lhead) or (not rhead) or (not lhead)
+        # Pull
         pull_remote(repo_path, branch)
+        # Update schedule timers
+        entry = proj_state.get(pid) or {
+            "name": name,
+            "folder": folder,
+            "interval_sec": MIN_SEC,
+            "next_due_ts": 0,
+        }
+        entry["name"] = name
+        entry["folder"] = folder
+        interval = int(entry.get("interval_sec", MIN_SEC) or MIN_SEC)
+        if changed:
+            interval = MIN_SEC
+        else:
+            interval = min(interval * 2, MAX_SEC)
+        entry["interval_sec"] = interval
+        entry["next_due_ts"] = now + interval
+        proj_state[pid] = entry
     # After successful sync of latest set, automatically prune old projects safely
     expected = {folder_name_for(p.get("name"), p.get("id")) for p in projects}
     pruned = 0
@@ -67,6 +104,9 @@ def run_sync(cfg: Config):
                     lingering += 1
             except Exception:
                 lingering += 1
+    # Persist updated schedule state
+    save_schedule_state(state)
+
     msg = f"[{datetime.now().isoformat(timespec='seconds')}] Synced {len(projects)} projects into {cfg.base_dir}"
     if pruned or lingering:
         msg += f"; pruned {pruned} old, {lingering} lingering"
@@ -136,6 +176,10 @@ def due_run(cfg: Config):
         enable_git_helper(platform.system())
 
     ensure_dir(cfg.base_dir)
+    # Cheap connectivity check before any API or cookie access
+    if not _has_internet(cfg):
+        _log_offline_and_push_timers()
+        return
     cookies = cfg.cookies if cfg.cookies else load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
     projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
@@ -198,6 +242,55 @@ def due_run(cfg: Config):
 
     # Log summary
     msg = f"[{datetime.now().isoformat(timespec='seconds')}] Synced {synced} due project(s); checked {checked}; next cadence min 30m"
+    print(msg)
+    try:
+        logs_dir = get_logs_dir()
+        with open(os.path.join(logs_dir, "app.log"), "a", encoding="utf-8") as lf:
+            lf.write(msg + "\n")
+    except Exception:
+        pass
+
+
+def _log_manual_offline():
+    """Log offline condition for manual sync without modifying schedule state."""
+    msg = f"[{datetime.now().isoformat(timespec='seconds')}] Manual sync aborted (no internet)"
+    print(msg)
+    try:
+        logs_dir = get_logs_dir()
+        with open(os.path.join(logs_dir, "app.log"), "a", encoding="utf-8") as lf:
+            lf.write(msg + "\n")
+    except Exception:
+        pass
+
+def _has_internet(cfg: Config, timeout: float = 3.0) -> bool:
+    """Check basic TCP connectivity to Overleaf host and git.overleaf.com."""
+    targets = [(cfg.host, 443), ("git.overleaf.com", 443)]
+    for host, port in targets:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                pass
+        except Exception:
+            return False
+    return True
+
+
+def _log_offline_and_push_timers():
+    """Log offline skip and push due timers forward by their current intervals to avoid immediate retries."""
+    import time as _time
+    now = int(_time.time())
+    state = load_schedule_state()
+    proj_state = state.setdefault("projects", {})
+    changed = False
+    for pid, ent in proj_state.items():
+        nd = int(ent.get("next_due_ts", 0) or 0)
+        # When offline, reschedule due projects to the minimum backoff (30 minutes)
+        MIN_SEC = 1800
+        if nd <= now:
+            ent["next_due_ts"] = now + MIN_SEC
+            changed = True
+    if changed:
+        save_schedule_state(state)
+    msg = f"[{datetime.now().isoformat(timespec='seconds')}] Runner skipped (no internet); rescheduled due projects in 30m"
     print(msg)
     try:
         logs_dir = get_logs_dir()
