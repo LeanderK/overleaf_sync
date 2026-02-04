@@ -19,6 +19,24 @@ from .git_ops import (
 )
 
 
+def is_plugged_in() -> bool:
+    """
+    Detect if the system is plugged into power (not running on battery).
+    Works on macOS and Linux.
+    
+    Returns:
+        bool: True if plugged in, False if on battery. Returns True if no battery detected (desktop).
+    """
+    try:
+        import psutil
+        battery = psutil.sensors_battery()
+        if battery is None:
+            return True  # No battery detected (desktop)
+        return battery.power_plugged
+    except Exception:
+        return True  # Assume plugged in if detection fails
+
+
 def run_sync(cfg: Config):
     # Require Git token for all sync operations to ensure non-interactive background runs
     if not cfg.git_token:
@@ -158,7 +176,15 @@ def due_run(cfg: Config):
     """Run sync selectively for projects that are due based on dynamic backoff.
 
     Backoff: min 30 minutes (1800s), doubles up to 24h (86400s) when no changes; resets to 30m on changes.
+
+    When plugged in (AC power) and the config allows full-sync-on-plugged-in, perform a full run.
+    On battery, only projects whose timers have expired are processed to conserve resources.
     """
+    plugged = is_plugged_in()
+    if cfg.sync_on_plugged_in and plugged:
+        run_sync(cfg)
+        return
+
     import time
     from .git_ops import (
         clone_if_missing,
@@ -176,6 +202,18 @@ def due_run(cfg: Config):
         enable_git_helper(platform.system())
 
     ensure_dir(cfg.base_dir)
+
+    # Load state early to check if anything is actually due (avoid expensive API call if not)
+    state = load_schedule_state()
+    proj_state = state.setdefault("projects", {})
+    now = int(time.time())
+
+    # Treat empty state as due so fresh installs seed the schedule
+    any_due = (not proj_state) or any(int(ent.get("next_due_ts", 0) or 0) <= now for ent in proj_state.values())
+    if not any_due:
+        # Nothing due; skip connectivity check and API calls entirely
+        return
+
     # Cheap connectivity check before any API or cookie access
     if not _has_internet(cfg):
         _log_offline_and_push_timers()
@@ -183,10 +221,6 @@ def due_run(cfg: Config):
     cookies = cfg.cookies if cfg.cookies else load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
     projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
-
-    state = load_schedule_state()
-    proj_state = state.setdefault("projects", {})
-    now = int(time.time())
     MIN_SEC = 1800
     MAX_SEC = 86400
 

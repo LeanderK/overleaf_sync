@@ -20,6 +20,7 @@ class Config:
     git_token: Optional[str] = None
     append_id_suffix: bool = True
     scheduler_mode: str = "dynamic"  # dynamic|full
+    sync_on_plugged_in: bool = True  # Only run full sync when plugged in (laptop battery-aware)
 
 
 def _mac_paths() -> Tuple[str, str, str]:
@@ -109,7 +110,17 @@ def load_config() -> Optional[Config]:
         return None
     with open(cfg_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    # Apply migrations for older configs
+    data = _migrate_config(data)
     return Config(**data)
+
+
+def _migrate_config(data: dict) -> dict:
+    """Migrate older config formats to current version."""
+    # For older configs without sync_on_plugged_in, default to True (battery-aware)
+    if "sync_on_plugged_in" not in data:
+        data["sync_on_plugged_in"] = True
+    return data
 
 
 def save_config(cfg: Config) -> None:
@@ -201,6 +212,10 @@ def prompt_first_run() -> Config:
     ans = input("Append short project ID to folder names to avoid collisions? [Y/n]: ").strip().lower()
     append_id_suffix = (ans != "n")
 
+    # Battery-aware sync
+    sync_plugged_in_ans = input("Skip sync when running on battery? [Y/n]: ").strip().lower()
+    sync_on_plugged_in = (sync_plugged_in_ans != "n")
+
     # Optional: paste Overleaf cookies (JSON map or Cookie header) if not captured
     if not cookies:
         print("Optional: paste Overleaf cookies to avoid browser access (press Enter to skip).")
@@ -230,6 +245,7 @@ def prompt_first_run() -> Config:
         cookies=cookies,
         git_token=git_token,
         append_id_suffix=append_id_suffix,
+        sync_on_plugged_in=sync_on_plugged_in,
     )
     save_config(cfg)
     print(f"Saved config to {get_config_path()}")
