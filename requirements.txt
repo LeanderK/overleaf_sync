@@ -1,3 +1,4 @@
 pyoverleaf>=0.1.7
 browsercookie>=0.7
 psutil>=5.9.0
+desktop-notifier>=5.0.1

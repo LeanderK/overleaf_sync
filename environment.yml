@@ -6,4 +6,5 @@ dependencies:
   - pip
   - pip:
       - pyoverleaf>=0.1.7
+      - desktop-notifier>=5.0.1
   - browsercookie>=0.7

@@ -6,6 +6,7 @@ from .config import load_config, prompt_first_run, Config, get_logs_dir, load_sc
 from .cookies import load_overleaf_cookies
 from .overleaf_api import create_api, list_projects_sorted_by_last_updated
 from .projects import folder_name_for, ensure_dir
+from .notifier import notify_sync_failure
 from .git_ops import (
     clone_if_missing,
     ensure_remote,
@@ -52,7 +53,11 @@ def run_sync(cfg: Config):
         cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
 
-    projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    try:
+        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    except Exception as e:
+        notify_sync_failure(e, context="list projects")
+        raise
 
     # Fast-fail on no internet for manual sync. Log only; do not adjust timers.
     if not _has_internet(cfg):
@@ -76,15 +81,19 @@ def run_sync(cfg: Config):
             raise RuntimeError(
                 "Missing Overleaf Git token for cloning. Run 'overleaf-pull set-git-token' and retry."
             )
-        repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
-        ensure_remote(repo_path, pid, cfg.git_token)
-        branch = detect_default_branch(repo_path)
-        # Determine if changes are present before pulling
-        rhead = get_remote_branch_head(repo_path, branch)
-        lhead = get_local_branch_head(repo_path, branch)
-        changed = needs_clone or (rhead != lhead) or (not rhead) or (not lhead)
-        # Pull
-        pull_remote(repo_path, branch)
+        try:
+            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+            # Determine if changes are present before pulling
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            changed = needs_clone or (rhead != lhead) or (not rhead) or (not lhead)
+            # Pull
+            pull_remote(repo_path, branch)
+        except Exception as e:
+            notify_sync_failure(e, context=f"sync project {name}")
+            raise
         # Update schedule timers
         entry = proj_state.get(pid) or {
             "name": name,
@@ -103,7 +112,11 @@ def run_sync(cfg: Config):
         entry["next_due_ts"] = now + interval
         proj_state[pid] = entry
     # After successful sync of latest set, automatically prune old projects safely
-    expected = {folder_name_for(p.get("name"), p.get("id")) for p in projects}
+    expected = {
+        folder_name_for(str(p.get("name", "")), str(p.get("id")))
+        for p in projects
+        if p.get("id") is not None
+    }
     pruned = 0
     lingering = 0
     for entry in os.listdir(cfg.base_dir):
@@ -148,7 +161,11 @@ def run_sync_validate_first(cfg: Config):
     else:
         cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
-    projects = list_projects_sorted_by_last_updated(api, cookies, 1)
+    try:
+        projects = list_projects_sorted_by_last_updated(api, cookies, 1)
+    except Exception as e:
+        notify_sync_failure(e, context="validation list projects")
+        raise
     if not projects:
         raise RuntimeError("No projects found for validation.")
     p = projects[0]
@@ -159,10 +176,14 @@ def run_sync_validate_first(cfg: Config):
     needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
     if needs_clone and not cfg.git_token:
         raise RuntimeError("Missing Overleaf Git token for cloning. Run 'overleaf-pull set-git-token'.")
-    repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
-    ensure_remote(repo_path, pid, cfg.git_token)
-    branch = detect_default_branch(repo_path)
-    pull_remote(repo_path, branch)
+    try:
+        repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+        ensure_remote(repo_path, pid, cfg.git_token)
+        branch = detect_default_branch(repo_path)
+        pull_remote(repo_path, branch)
+    except Exception as e:
+        notify_sync_failure(e, context=f"validation sync {name}")
+        raise
     print(f"Validation sync OK for '{name}' ({pid}).")
 
 
@@ -220,7 +241,11 @@ def due_run(cfg: Config):
         return
     cookies = cfg.cookies if cfg.cookies else load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
-    projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    try:
+        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    except Exception as e:
+        notify_sync_failure(e, context="dynamic list projects")
+        raise
     MIN_SEC = 1800
     MAX_SEC = 86400
 
@@ -250,18 +275,26 @@ def due_run(cfg: Config):
             proj_state[pid] = entry
             continue
 
-        # Ensure repo exists and remote configured
-        repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
-        ensure_remote(repo_path, pid, cfg.git_token)
-        branch = detect_default_branch(repo_path)
+        try:
+            # Ensure repo exists and remote configured
+            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
 
-        # Compare heads to decide whether to pull
-        rhead = get_remote_branch_head(repo_path, branch)
-        lhead = get_local_branch_head(repo_path, branch)
-        changed = (rhead != lhead) or (not rhead) or (not lhead)
+            # Compare heads to decide whether to pull
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            changed = (rhead != lhead) or (not rhead) or (not lhead)
+        except Exception as e:
+            notify_sync_failure(e, context=f"dynamic sync project {name}")
+            raise
         checked += 1
         if changed:
-            pull_remote(repo_path, branch)
+            try:
+                pull_remote(repo_path, branch)
+            except Exception as e:
+                notify_sync_failure(e, context=f"dynamic pull {name}")
+                raise
             synced += 1
             interval = MIN_SEC
         else:

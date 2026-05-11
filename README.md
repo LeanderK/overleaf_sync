@@ -167,6 +167,7 @@ Notes
 - This tool is pull-only; it never pushes to Overleaf.
 - Safari cookie access may require permissions; Firefox is often more reliable for unattended use.
 - If Safari access fails, paste Overleaf cookies once via `set-cookie` to avoid elevated access.
+- Desktop notifications are emitted on sync failures, including authentication/key expiration and potential Overleaf API compatibility issues.
 - Use Git credential helpers for smooth pulls:
 ```bash
 git config --global credential.helper osxkeychain   # macOS
