@@ -307,6 +307,10 @@ def cmd_status(args):
                 hrs = mins // 60
                 return f"in {hrs}h"
 
+            interval_map = {"30m": 1800, "1h": 3600, "12h": 43200, "24h": 86400}
+            scheduler_interval_sec = interval_map.get(cfg.sync_interval, 3600)
+            scheduler_eta_fallback = f"in about {_format_future(scheduler_interval_sec).removeprefix('in ')}"
+
             runner_eta_str = None
             if next_run_str:
                 try:
@@ -330,12 +334,12 @@ def cmd_status(args):
                         if runner_eta_str:
                             status = f"stale; next check {runner_eta_str}"
                         else:
-                            status = "stale"
+                            status = f"stale; next check {scheduler_eta_fallback}"
                     else:
                         if runner_eta_str:
                             status = f"due now; next check {runner_eta_str}"
                         else:
-                            status = "due now"
+                            status = f"due now; next check {scheduler_eta_fallback}"
                 else:
                     status = f"next due {_format_future(delta)}"
                 print(f"- {nm}: {status} (scheduled {ts})")
