@@ -342,7 +342,8 @@ def cmd_status(args):
                             status = f"due now; next check {scheduler_eta_fallback}"
                 else:
                     status = f"next due {_format_future(delta)}"
-                print(f"- {nm}: {status} (scheduled {ts})")
+                extra = f" (scheduled {ts})" if delta > 0 else ""
+                print(f"- {nm}: {status}{extra}")
     except Exception:
         pass
 
