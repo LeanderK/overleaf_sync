@@ -299,6 +299,24 @@ def cmd_status(args):
                 items.append((nd, ent.get("name") or pid, interval))
             items.sort(key=lambda x: x[0])
             now_ts = int(_time.time())
+
+            def _format_future(delta_sec: int) -> str:
+                mins = max(0, delta_sec // 60)
+                if mins < 60:
+                    return f"in {mins}m"
+                hrs = mins // 60
+                return f"in {hrs}h"
+
+            runner_eta_str = None
+            if next_run_str:
+                try:
+                    import datetime as _dt
+                    runner_eta_ts = int(_dt.datetime.fromisoformat(next_run_str).timestamp())
+                    runner_eta = max(0, runner_eta_ts - now_ts)
+                    runner_eta_str = _format_future(runner_eta)
+                except Exception:
+                    runner_eta_str = None
+
             for nd, nm, interval in items[:10]:
                 delta = nd - now_ts
                 try:
@@ -309,16 +327,17 @@ def cmd_status(args):
                 if delta <= 0:
                     overdue = -delta
                     if overdue > interval:
-                        status = f"stale (overdue by {overdue//3600}h)"
+                        if runner_eta_str:
+                            status = f"stale; next check {runner_eta_str}"
+                        else:
+                            status = "stale"
                     else:
-                        status = "due now"
+                        if runner_eta_str:
+                            status = f"due now; next check {runner_eta_str}"
+                        else:
+                            status = "due now"
                 else:
-                    mins = delta // 60
-                    if mins < 60:
-                        status = f"in {mins}m"
-                    else:
-                        hrs = mins // 60
-                        status = f"in {hrs}h"
+                    status = f"next due {_format_future(delta)}"
                 print(f"- {nm}: {status} (scheduled {ts})")
     except Exception:
         pass
