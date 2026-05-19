@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import time
 from typing import Optional
 
@@ -51,6 +52,7 @@ def _is_auth_failure(text: str) -> bool:
         "login failed",
         "git clone failed",
         "git pull failed",
+        "please ensure that you are logged into overleaf in your browser and that your session is valid",
     ]
     return _contains_any(text, auth_needles)
 
@@ -68,6 +70,29 @@ def _is_api_compat_failure(text: str) -> bool:
         "get_projects",
     ]
     return _contains_any(text, api_needles)
+
+
+def _failure_payload(exc: Exception, context: str = "") -> tuple[str, str, str]:
+    text = _normalize_text(exc, context)
+    if _is_auth_failure(text):
+        return (
+            "Overleaf Sync: Authentication Failed",
+            "Your Overleaf token/cookies may be expired. Run set-git-token or browser-login-qt.",
+            "auth-failure",
+        )
+
+    if _is_api_compat_failure(text):
+        return (
+            "Overleaf Sync: API Compatibility Issue",
+            "Overleaf or pyoverleaf API likely changed. Upgrade pyoverleaf and retry sync.",
+            "api-compat-failure",
+        )
+
+    return (
+        "Overleaf Sync: Failure",
+        "A sync run failed. Check logs with overleaf-pull status for details.",
+        "generic-sync-failure",
+    )
 
 
 def send_notification(title: str, message: str, key: Optional[str] = None) -> None:
@@ -93,25 +118,23 @@ def send_notification(title: str, message: str, key: Optional[str] = None) -> No
 
 
 def notify_sync_failure(exc: Exception, context: str = "") -> None:
-    text = _normalize_text(exc, context)
-    if _is_auth_failure(text):
-        send_notification(
-            title="Overleaf Sync: Authentication Failed",
-            message="Your Overleaf token/cookies may be expired. Run set-git-token or browser-login-qt.",
-            key="auth-failure",
-        )
-        return
+    report_sync_failure(exc, context=context, cli=False, desktop=True)
 
-    if _is_api_compat_failure(text):
-        send_notification(
-            title="Overleaf Sync: API Compatibility Issue",
-            message="Overleaf or pyoverleaf API likely changed. Upgrade pyoverleaf and retry sync.",
-            key="api-compat-failure",
-        )
-        return
 
-    send_notification(
-        title="Overleaf Sync: Failure",
-        message="A sync run failed. Check logs with overleaf-pull status for details.",
-        key="generic-sync-failure",
-    )
+def report_sync_failure(
+    exc: Exception,
+    context: str = "",
+    *,
+    cli: bool = True,
+    desktop: bool = False,
+) -> None:
+    title, message, key = _failure_payload(exc, context)
+    if cli:
+        try:
+            details = _normalize_text(exc, context)
+        except Exception:
+            details = f"{type(exc).__name__}: {exc}"
+        print(f"{title}: {message}", file=sys.stderr)
+        print(f"Error Details: {details}", file=sys.stderr)
+    if desktop:
+        send_notification(title=title, message=message, key=key)

@@ -6,7 +6,7 @@ from .config import load_config, prompt_first_run, Config, get_logs_dir, load_sc
 from .cookies import load_overleaf_cookies
 from .overleaf_api import create_api, list_projects_sorted_by_last_updated
 from .projects import folder_name_for, ensure_dir
-from .notifier import notify_sync_failure
+from .notifier import report_sync_failure
 from .git_ops import (
     clone_if_missing,
     ensure_remote,
@@ -56,7 +56,7 @@ def run_sync(cfg: Config):
     try:
         projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
     except Exception as e:
-        notify_sync_failure(e, context="list projects")
+        report_sync_failure(e, context="list projects", cli=True, desktop=True)
         raise
 
     # Fast-fail on no internet for manual sync. Log only; do not adjust timers.
@@ -92,7 +92,7 @@ def run_sync(cfg: Config):
             # Pull
             pull_remote(repo_path, branch)
         except Exception as e:
-            notify_sync_failure(e, context=f"sync project {name}")
+            report_sync_failure(e, context=f"sync project {name}", cli=True, desktop=True)
             raise
         # Update schedule timers
         entry = proj_state.get(pid) or {
@@ -164,7 +164,7 @@ def run_sync_validate_first(cfg: Config):
     try:
         projects = list_projects_sorted_by_last_updated(api, cookies, 1)
     except Exception as e:
-        notify_sync_failure(e, context="validation list projects")
+        report_sync_failure(e, context="validation list projects", cli=True, desktop=False)
         raise
     if not projects:
         raise RuntimeError("No projects found for validation.")
@@ -182,7 +182,7 @@ def run_sync_validate_first(cfg: Config):
         branch = detect_default_branch(repo_path)
         pull_remote(repo_path, branch)
     except Exception as e:
-        notify_sync_failure(e, context=f"validation sync {name}")
+        report_sync_failure(e, context=f"validation sync {name}", cli=True, desktop=False)
         raise
     print(f"Validation sync OK for '{name}' ({pid}).")
 
@@ -244,7 +244,7 @@ def due_run(cfg: Config):
     try:
         projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
     except Exception as e:
-        notify_sync_failure(e, context="dynamic list projects")
+        report_sync_failure(e, context="dynamic list projects", cli=True, desktop=True)
         raise
     MIN_SEC = 1800
     MAX_SEC = 86400
@@ -286,14 +286,14 @@ def due_run(cfg: Config):
             lhead = get_local_branch_head(repo_path, branch)
             changed = (rhead != lhead) or (not rhead) or (not lhead)
         except Exception as e:
-            notify_sync_failure(e, context=f"dynamic sync project {name}")
+            report_sync_failure(e, context=f"dynamic sync project {name}", cli=True, desktop=True)
             raise
         checked += 1
         if changed:
             try:
                 pull_remote(repo_path, branch)
             except Exception as e:
-                notify_sync_failure(e, context=f"dynamic pull {name}")
+                report_sync_failure(e, context=f"dynamic pull {name}", cli=True, desktop=True)
                 raise
             synced += 1
             interval = MIN_SEC

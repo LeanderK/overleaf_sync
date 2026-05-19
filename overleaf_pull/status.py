@@ -1,7 +1,9 @@
+import sys
 import os
 import concurrent.futures
 
 from .config import load_config, prompt_first_run, get_logs_dir
+from .notifier import report_sync_failure
 
 
 def _tail(path: str, lines: int = 50) -> list[str]:
@@ -24,9 +26,13 @@ def cmd_status(args):
     if not cookies:
         from .cookies import load_overleaf_cookies
         cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
-    from .overleaf_api import create_api, list_projects_sorted_by_last_updated
-    api = create_api(cfg.host)
-    projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    try:
+        from .overleaf_api import create_api, list_projects_sorted_by_last_updated
+        api = create_api(cfg.host)
+        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    except Exception as e:
+        report_sync_failure(e, context="status list projects", cli=True, desktop=False)
+        sys.exit(1)
 
     from .projects import folder_name_for
     from .git_ops import (

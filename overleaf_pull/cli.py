@@ -50,7 +50,7 @@ def cmd_install(args):
         print("Running a validation sync before installing scheduler...")
         run_sync_validate_first(cfg)
     except Exception as e:
-        print(f"Validation sync failed: {e}")
+        print("Validation sync failed.")
         print("Not installing scheduler. Fix the issue and retry.")
         return
     # Uninstall any existing scheduler instance, then install fresh
@@ -319,7 +319,10 @@ def main():
     if not hasattr(args, "func"):
         parser.print_help()
         sys.exit(1)
-    args.func(args)
+    try:
+        args.func(args)
+    except Exception:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
