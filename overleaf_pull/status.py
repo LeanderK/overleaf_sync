@@ -109,6 +109,52 @@ def cmd_status(args):
         if os.path.isdir(os.path.join(path, ".git")) and entry not in expected:
             old_repos.append(path)
 
+    # Report old local repos and their Git status (clean/dirty, unpushed commits)
+    if old_repos:
+        from .git_ops import is_worktree_clean, has_unpushed_commits, detect_default_branch
+        safe = []
+        pending = []
+        for repo in old_repos[:200]:
+            try:
+                branch = detect_default_branch(repo)
+                clean = is_worktree_clean(repo)
+                ahead = has_unpushed_commits(repo, branch)
+                if clean and ahead is False:
+                    safe.append((repo, branch))
+                else:
+                    pending.append((repo, branch, clean, ahead))
+            except Exception as e:
+                pending.append((repo, None, None, None))
+
+        # Safe lingering repos: no action needed (list only)
+        if safe:
+            print("\n=== Lingering (to be deleted) — OK to delete if desired ===")
+            for repo, branch in safe:
+                print(f"- {repo} (branch {branch})")
+
+        # Pending lingering repos: require user action
+        if pending:
+            print("\n=== Lingering but with pending work — ACTION REQUIRED ===")
+            print("These projects are not in Overleaf's latest set and may have unsaved or unpushed work.")
+            for item in pending[:200]:
+                repo, branch, clean, ahead = item
+                try:
+                    branch = branch or detect_default_branch(repo)
+                    if clean is False or ahead is True:
+                        status_bits = []
+                        if clean is False:
+                            status_bits.append("dirty")
+                        if ahead is True:
+                            status_bits.append("unpushed")
+                        note = " and ".join(status_bits)
+                        print(f"- {repo}: branch {branch}, needs action ({note})")
+                    elif ahead is False and clean is True:
+                        print(f"- {repo}: branch {branch}, looks fine, but still not in latest set")
+                    else:
+                        print(f"- {repo}: branch {branch}, needs action (status unknown; please review)")
+                except Exception as e:
+                    print(f"- {repo}: error checking status: {e}")
+
     lingering = []
     removed = []
     if args.prune and old_repos:
@@ -296,7 +342,12 @@ def cmd_status(args):
             for pid, ent in projs.items():
                 nd = int(ent.get("next_due_ts", 0) or 0)
                 interval = int(ent.get("interval_sec", 1800) or 1800)
-                items.append((nd, ent.get("name") or pid, interval))
+                pending = bool(ent.get("pending_delete"))
+                unsynced = bool(ent.get("unsynced"))
+                folder = ent.get("folder") or ""
+                repo_path = os.path.join(cfg.base_dir, folder) if folder else ""
+                repo_exists = bool(repo_path and os.path.isdir(os.path.join(repo_path, ".git")))
+                items.append((nd, pid, ent.get("name") or pid, interval, pending, unsynced, repo_exists))
             items.sort(key=lambda x: x[0])
             now_ts = int(_time.time())
 
@@ -321,7 +372,7 @@ def cmd_status(args):
                 except Exception:
                     runner_eta_str = None
 
-            for nd, nm, interval in items[:10]:
+            for nd, pid, nm, interval, pending, unsynced, repo_exists in items[:10]:
                 delta = nd - now_ts
                 try:
                     import datetime as _dt
@@ -343,7 +394,17 @@ def cmd_status(args):
                 else:
                     status = f"next due {_format_future(delta)}"
                 extra = f" (scheduled {ts})" if delta > 0 else ""
-                print(f"- {nm}: {status}{extra}")
+                if pending and not repo_exists:
+                    status = "deleted locally; state cleanup pending"
+                    marker_str = ""
+                else:
+                    markers = []
+                    if pending:
+                        markers.append("pending delete")
+                    if unsynced:
+                        markers.append("unsynced")
+                    marker_str = f" [{' / '.join(markers)}]" if markers else ""
+                print(f"- {nm}: {status}{extra}{marker_str}")
     except Exception:
         pass
 

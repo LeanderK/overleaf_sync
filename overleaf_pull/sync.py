@@ -71,43 +71,105 @@ def run_sync(cfg: Config):
     MIN_SEC = 1800
     MAX_SEC = 86400
 
-    for p in projects:
-        pid = p["id"]
-        name = p["name"]
-        folder = folder_name_for(name, pid)
-        repo_dir = os.path.join(cfg.base_dir, folder)
-        needs_clone = not os.path.isdir(os.path.join(repo_dir, ".git"))
-        if needs_clone and not cfg.git_token:
-            raise RuntimeError(
-                "Missing Overleaf Git token for cloning. Run 'overleaf-pull set-git-token' and retry."
-            )
-        try:
-            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
-            ensure_remote(repo_path, pid, cfg.git_token)
-            branch = detect_default_branch(repo_path)
-            # Determine if changes are present before pulling
-            rhead = get_remote_branch_head(repo_path, branch)
-            lhead = get_local_branch_head(repo_path, branch)
-            changed = needs_clone or (rhead != lhead) or (not rhead) or (not lhead)
-            # Pull
-            pull_remote(repo_path, branch)
-        except Exception as e:
-            report_sync_failure(e, context=f"sync project {name}", cli=True, desktop=True)
-            raise
-        # Update schedule timers
+    # Compute candidates: union of latest-N from API and any projects that are due now
+    api_map = {str(p.get("id")): p for p in projects if p.get("id") is not None}
+    api_ids = set(api_map.keys())
+    due_ids = {pid for pid, ent in proj_state.items() if int(ent.get("next_due_ts", 0) or 0) <= now}
+    candidates = api_ids.union(due_ids)
+
+    for pid in candidates:
+        p = api_map.get(pid)
+        # If we have API info, prefer its name; otherwise fall back to saved state
+        name = (p.get("name") if p else None) or (proj_state.get(pid) or {}).get("name") or pid
+        folder = (folder_name_for(name, pid) if p else (proj_state.get(pid) or {}).get("folder"))
+        folder = folder or str(pid)
+        repo_dir = os.path.join(cfg.base_dir, folder) if folder else os.path.join(cfg.base_dir, str(pid))
+
+        # If this project is not present in the latest API set, consider it a prune candidate
+        if pid not in api_ids:
+            # Only attempt prune if repo exists
+            if os.path.isdir(os.path.join(repo_dir, ".git")):
+                try:
+                    branch = detect_default_branch(repo_dir)
+                    clean = is_worktree_clean(repo_dir)
+                    ahead = has_unpushed_commits(repo_dir, branch)
+                    if clean and ahead is False:
+                        import shutil
+
+                        shutil.rmtree(repo_dir)
+                        # Remove from state if present
+                        if pid in proj_state:
+                            proj_state.pop(pid, None)
+                    else:
+                        # Mark as pending deletion and unsynced so status can report it
+                        ent = proj_state.setdefault(pid, {})
+                        ent["pending_delete"] = True
+                        ent["unsynced"] = True
+                        ent.setdefault("name", name)
+                        ent.setdefault("folder", folder)
+                        # Report as a non-fatal condition so user is aware
+                        report_sync_failure(
+                            RuntimeError("Prune skipped (dirty or unpushed): %s" % folder),
+                            context=f"prune candidate {name}",
+                            cli=True,
+                            desktop=True,
+                        )
+                except Exception as e:
+                    # Report failure to evaluate prune candidate but continue
+                    report_sync_failure(e, context=f"prune evaluate {name}", cli=True, desktop=True)
+                continue
+
+        # For API-backed projects (or due saved entries), ensure repo present and sync if due
         entry = proj_state.get(pid) or {
             "name": name,
             "folder": folder,
             "interval_sec": MIN_SEC,
             "next_due_ts": 0,
         }
+        # Keep name/folder up to date
         entry["name"] = name
         entry["folder"] = folder
+
         interval = int(entry.get("interval_sec", MIN_SEC) or MIN_SEC)
+        next_due = int(entry.get("next_due_ts", 0) or 0)
+
+        if next_due > now:
+            proj_state[pid] = entry
+            continue
+
+        try:
+            # Ensure repo exists and remote configured
+            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+
+            # Compare heads to decide whether to pull
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            changed = (rhead != lhead) or (not rhead) or (not lhead)
+        except Exception as e:
+            # Report and continue with other candidates; do not raise to avoid aborting the run
+            report_sync_failure(e, context=f"dynamic sync project {name}", cli=True, desktop=True)
+            # bump retry to MIN_SEC to retry soon
+            entry["interval_sec"] = MIN_SEC
+            entry["next_due_ts"] = now + MIN_SEC
+            proj_state[pid] = entry
+            continue
         if changed:
+            try:
+                pull_remote(repo_path, branch)
+            except Exception as e:
+                report_sync_failure(e, context=f"dynamic pull {name}", cli=True, desktop=True)
+                # schedule a quick retry
+                entry["interval_sec"] = MIN_SEC
+                entry["next_due_ts"] = now + MIN_SEC
+                proj_state[pid] = entry
+                continue
+            
             interval = MIN_SEC
         else:
             interval = min(interval * 2, MAX_SEC)
+
         entry["interval_sec"] = interval
         entry["next_due_ts"] = now + interval
         proj_state[pid] = entry
@@ -129,12 +191,43 @@ def run_sync(cfg: Config):
                 ahead = has_unpushed_commits(path, branch)
                 if clean and ahead is False:
                     import shutil
+
                     shutil.rmtree(path)
                     pruned += 1
+                    # Also remove any schedule state entry that referenced this folder
+                    for pid, ent in list(proj_state.items()):
+                        if ent.get("folder") == entry:
+                            proj_state.pop(pid, None)
                 else:
+                    # Mark lingering in schedule state for user attention
                     lingering += 1
-            except Exception:
+                    for pid, ent in proj_state.items():
+                        if ent.get("folder") == entry:
+                            ent["pending_delete"] = True
+                            ent["unsynced"] = True
+                            # report the condition so it surfaces in notifications
+                            report_sync_failure(
+                                RuntimeError("Prune skipped (dirty or unpushed): %s" % entry),
+                                context=f"prune candidate {entry}",
+                                cli=True,
+                                desktop=True,
+                            )
+            except Exception as e:
                 lingering += 1
+                # Report failure to evaluate prune candidate
+                report_sync_failure(e, context=f"prune evaluate {entry}", cli=True, desktop=True)
+
+    # Clean up stale schedule entries for repos that are already gone.
+    # This keeps status from repeatedly showing deleted repos as pending work.
+    for pid, ent in list(proj_state.items()):
+        folder = ent.get("folder")
+        repo_path = os.path.join(cfg.base_dir, folder) if folder else None
+        repo_exists = bool(repo_path and os.path.isdir(os.path.join(repo_path, ".git")))
+        if ent.get("pending_delete") and not repo_exists:
+            proj_state.pop(pid, None)
+        elif not repo_exists and folder and folder not in expected:
+            # Old state for a repo that no longer exists locally.
+            proj_state.pop(pid, None)
     # Persist updated schedule state
     save_schedule_state(state)
 

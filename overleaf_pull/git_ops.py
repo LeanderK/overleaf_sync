@@ -142,12 +142,17 @@ def is_worktree_clean(path: str) -> bool:
 
 def has_unpushed_commits(path: str, branch: str) -> Optional[bool]:
     """Return True if local is ahead of remote for branch. None if cannot determine."""
-    # Ensure remote ref exists locally; do a quiet ls-remote to confirm
-    rsha = get_remote_branch_head(path, branch)
-    if not rsha:
-        return None
+    # Ensure the local remote-tracking ref exists before comparing heads.
+    # `git ls-remote` can succeed even when refs/remotes/overleaf/<branch> has never been fetched locally.
+    local_ref = f"refs/remotes/overleaf/{branch}"
+    ref_check = _run(["git", "rev-parse", "--verify", "--quiet", local_ref], cwd=path)
+    if ref_check.returncode != 0:
+        fetch_cmd = ["git", "fetch", "--no-tags", "overleaf", f"refs/heads/{branch}:refs/remotes/overleaf/{branch}"]
+        fetch_res = _run(fetch_cmd, cwd=path)
+        if fetch_res.returncode != 0:
+            return None
     # Count commits that are in HEAD but not in remote branch
-    res = _run(["git", "rev-list", f"overleaf/{branch}..HEAD", "--count"], cwd=path)
+    res = _run(["git", "rev-list", f"{local_ref}..HEAD", "--count"], cwd=path)
     if res.returncode != 0:
         return None
     try:
