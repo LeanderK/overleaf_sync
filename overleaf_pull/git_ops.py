@@ -70,13 +70,11 @@ def clone_if_missing(base_dir: str, folder: str, project_id: str, token: Optiona
                     f"GIT CLONE FAILED - AUTHENTICATION ERROR\n\n"
                     f"Error: {error_msg}\n\n"
                     "Your Overleaf Git authentication token is OUTDATED or INVALID.\n\n"
-                    "How to fix:\n"
-                    "1. Get a new token from Overleaf account settings\n"
+                    "The token MUST be set using the set-git-token command:\n"
+                    "1. Get a new token from Overleaf account settings (https://www.overleaf.com/user/settings/tokens)\n"
                     "2. Run: overleaf-pull set-git-token\n"
-                    "3. The new token will be used for all future clones\n\n"
-                    "Alternative methods:\n"
-                    "  • overleaf-pull browser-login-qt (recommended if PySide6 is installed)\n"
-                    "  • overleaf-pull browser-login (manual cookie copy)"
+                    "3. Enter the new token when prompted\n"
+                    "4. The new token will be used for all future clones"
                 )
             
             raise RuntimeError(f"git clone failed: {error_msg}")
@@ -163,13 +161,11 @@ def pull_remote(path: str, branch: str) -> None:
                 f"GIT PULL FAILED - AUTHENTICATION ERROR\n\n"
                 f"Error: {error_msg}\n\n"
                 "Your Overleaf Git authentication token is OUTDATED or INVALID.\n\n"
-                "How to fix:\n"
-                "1. Get a new token from Overleaf account settings\n"
+                "The token MUST be set using the set-git-token command:\n"
+                "1. Get a new token from Overleaf account settings (https://www.overleaf.com/user/settings/tokens)\n"
                 "2. Run: overleaf-pull set-git-token\n"
-                "3. The new token will be used for all future pulls\n\n"
-                "Alternative methods:\n"
-                "  • overleaf-pull browser-login-qt (recommended if PySide6 is installed)\n"
-                "  • overleaf-pull browser-login (manual cookie copy)"
+                "3. Enter the new token when prompted\n"
+                "4. The new token will be used for all future pulls"
             )
         
         raise RuntimeError(f"git pull failed: {error_msg}")
