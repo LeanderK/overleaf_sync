@@ -1,6 +1,7 @@
 import platform
 import os
 import socket
+import re
 from datetime import datetime
 from .config import load_config, prompt_first_run, Config, get_logs_dir, load_schedule_state, save_schedule_state
 from .cookies import load_overleaf_cookies
@@ -17,6 +18,7 @@ from .git_ops import (
     has_unpushed_commits,
     get_remote_branch_head,
     get_local_branch_head,
+    build_remote_url,
 )
 
 
@@ -282,8 +284,244 @@ def run_sync_validate_first(cfg: Config):
 
 def run_sync_once():
     cfg = load_config() or prompt_first_run()
-    # Manual run should always sync everything
-    run_sync(cfg)
+    # Manual run should always sync everything, ignoring timers
+    run_sync_once_full(cfg)
+
+
+def run_sync_once_full(cfg: Config):
+    """Full refresh of all projects, ignoring per-project timers.
+    
+    This is used by the manual 'run-once' command to ensure all projects are checked
+    and pulled, regardless of their individual backoff timers.
+    """
+    # Require Git token for all sync operations to ensure non-interactive background runs
+    if not cfg.git_token:
+        raise RuntimeError("Git token is required. Run 'overleaf-pull set-git-token' and retry.")
+    if cfg.git_helper:
+        enable_git_helper(platform.system())
+
+    ensure_dir(cfg.base_dir)
+    
+    # Proactively check and update remotes with current token to catch stale tokens early
+    _check_and_update_stale_tokens(cfg)
+    
+    # Prefer cookies from config if present
+    if cfg.cookies:
+        cookies = cfg.cookies
+    else:
+        cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
+    api = create_api(cfg.host)
+
+    try:
+        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+    except Exception as e:
+        report_sync_failure(e, context="list projects", cli=True, desktop=True)
+        raise
+
+    # Fast-fail on no internet for manual sync. Log only; do not adjust timers.
+    if not _has_internet(cfg):
+        _log_manual_offline()
+        raise RuntimeError("No internet connectivity to Overleaf/git; aborted full sync.")
+    
+    # Load schedule state to adjust timers based on manual sync outcome
+    state = load_schedule_state()
+    proj_state = state.setdefault("projects", {})
+    import time as _time
+    now = int(_time.time())
+    MIN_SEC = 1800
+    MAX_SEC = 86400
+
+    # For run-once-full, we refresh all API projects regardless of timers
+    api_map = {str(p.get("id")): p for p in projects if p.get("id") is not None}
+    api_ids = set(api_map.keys())
+    # Include all API projects for full refresh
+    candidates = api_ids
+
+    for pid in candidates:
+        p = api_map.get(pid)
+        # If we have API info, prefer its name; otherwise fall back to saved state
+        name = (p.get("name") if p else None) or (proj_state.get(pid) or {}).get("name") or pid
+        folder = (folder_name_for(name, pid) if p else (proj_state.get(pid) or {}).get("folder"))
+        folder = folder or str(pid)
+        repo_dir = os.path.join(cfg.base_dir, folder) if folder else os.path.join(cfg.base_dir, str(pid))
+
+        try:
+            # Ensure repo exists and remote configured
+            repo_path = clone_if_missing(cfg.base_dir, folder, pid, cfg.git_token)
+            ensure_remote(repo_path, pid, cfg.git_token)
+            branch = detect_default_branch(repo_path)
+
+            # Compare heads to decide whether to pull
+            rhead = get_remote_branch_head(repo_path, branch)
+            lhead = get_local_branch_head(repo_path, branch)
+            changed = (rhead != lhead) or (not rhead) or (not lhead)
+        except Exception as e:
+            # Report and continue with other candidates; do not raise to avoid aborting the run
+            report_sync_failure(e, context=f"full sync project {name}", cli=True, desktop=True)
+            # bump retry to MIN_SEC to retry soon
+            entry = proj_state.setdefault(pid, {})
+            entry["interval_sec"] = MIN_SEC
+            entry["next_due_ts"] = now + MIN_SEC
+            continue
+        
+        if changed:
+            try:
+                pull_remote(repo_path, branch)
+            except Exception as e:
+                report_sync_failure(e, context=f"full pull {name}", cli=True, desktop=True)
+                # schedule a quick retry
+                entry = proj_state.setdefault(pid, {})
+                entry["interval_sec"] = MIN_SEC
+                entry["next_due_ts"] = now + MIN_SEC
+                continue
+            
+            interval = MIN_SEC
+        else:
+            interval = min(MIN_SEC * 2, MAX_SEC)
+
+        # Update state for this project
+        entry = proj_state.get(pid) or {
+            "name": name,
+            "folder": folder,
+            "interval_sec": interval,
+            "next_due_ts": now + interval,
+        }
+        entry["name"] = name
+        entry["folder"] = folder
+        entry["interval_sec"] = interval
+        entry["next_due_ts"] = now + interval
+        proj_state[pid] = entry
+
+    # After successful sync of latest set, automatically prune old projects safely
+    expected = {
+        folder_name_for(str(p.get("name", "")), str(p.get("id")))
+        for p in projects
+        if p.get("id") is not None
+    }
+    pruned = 0
+    lingering = 0
+    for entry in os.listdir(cfg.base_dir):
+        path = os.path.join(cfg.base_dir, entry)
+        if os.path.isdir(os.path.join(path, ".git")) and entry not in expected:
+            # Remove only if clean and with no unpushed commits
+            try:
+                branch = detect_default_branch(path)
+                clean = is_worktree_clean(path)
+                ahead = has_unpushed_commits(path, branch)
+                if clean and ahead is False:
+                    import shutil
+
+                    shutil.rmtree(path)
+                    pruned += 1
+                    # Also remove any schedule state entry that referenced this folder
+                    for pid, ent in list(proj_state.items()):
+                        if ent.get("folder") == entry:
+                            proj_state.pop(pid, None)
+                else:
+                    # Mark lingering in schedule state for user attention
+                    lingering += 1
+                    for pid, ent in proj_state.items():
+                        if ent.get("folder") == entry:
+                            ent["pending_delete"] = True
+                            ent["unsynced"] = True
+                            # report the condition so it surfaces in notifications
+                            report_sync_failure(
+                                RuntimeError("Prune skipped (dirty or unpushed): %s" % entry),
+                                context=f"prune candidate {entry}",
+                                cli=True,
+                                desktop=True,
+                            )
+            except Exception as e:
+                lingering += 1
+                # Report failure to evaluate prune candidate
+                report_sync_failure(e, context=f"prune evaluate {entry}", cli=True, desktop=True)
+
+    # Clean up stale schedule entries for repos that are already gone.
+    # This keeps status from repeatedly showing deleted repos as pending work.
+    for pid, ent in list(proj_state.items()):
+        folder = ent.get("folder")
+        repo_path = os.path.join(cfg.base_dir, folder) if folder else None
+        repo_exists = bool(repo_path and os.path.isdir(os.path.join(repo_path, ".git")))
+        if ent.get("pending_delete") and not repo_exists:
+            proj_state.pop(pid, None)
+        elif not repo_exists and folder and folder not in expected:
+            # Old state for a repo that no longer exists locally.
+            proj_state.pop(pid, None)
+    # Persist updated schedule state
+    save_schedule_state(state)
+
+    msg = f"[{datetime.now().isoformat(timespec='seconds')}] Full refresh synced {len(projects)} projects into {cfg.base_dir}"
+    if pruned or lingering:
+        msg += f"; pruned {pruned} old, {lingering} lingering"
+    print(msg)
+    # Append to app log for status checks
+    try:
+        logs_dir = get_logs_dir()
+        with open(os.path.join(logs_dir, "app.log"), "a", encoding="utf-8") as lf:
+            lf.write(msg + "\n")
+    except Exception:
+        pass
+
+
+def _check_and_update_stale_tokens(cfg: Config) -> None:
+    """Proactively check all existing repos for stale tokens and update them.
+    
+    This function walks through all local repos and checks if their git remote URL
+    contains a token that differs from the current configured token. If a mismatch
+    is detected, it updates the remote URL with the current token.
+    """
+    base_dir = cfg.base_dir
+    if not os.path.isdir(base_dir):
+        return
+    
+    # Regex to extract token from git URL (token is after "git:" and before "@")
+    token_pattern = re.compile(r'https://git:([^@]+)@git\.overleaf\.com/')
+    
+    updated_count = 0
+    for entry in os.listdir(base_dir):
+        repo_path = os.path.join(base_dir, entry)
+        git_dir = os.path.join(repo_path, ".git")
+        
+        if not os.path.isdir(git_dir):
+            continue
+        
+        try:
+            # Get current remote URL
+            from .git_ops import _run, REMOTE_NAME
+            res = _run(["git", "remote", "get-url", REMOTE_NAME], cwd=repo_path)
+            if res.returncode != 0:
+                continue
+            
+            current_url = res.stdout.strip()
+            if not current_url:
+                continue
+            
+            # Extract project ID from URL
+            match = re.search(r'git\.overleaf\.com/([a-f0-9]+)', current_url)
+            if not match:
+                continue
+            
+            project_id = match.group(1)
+            
+            # Check if current URL has a token
+            token_match = token_pattern.search(current_url)
+            current_token_in_url = token_match.group(1) if token_match else None
+            
+            # Build target URL with current token
+            target_url = build_remote_url(project_id, cfg.git_token)
+            
+            # If URL differs, update it
+            if current_url != target_url:
+                safe_url = target_url.replace(cfg.git_token, "***") if cfg.git_token else target_url
+                print(f"$ git remote set-url {REMOTE_NAME} {safe_url} (updating stale token)")
+                _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=repo_path)
+                updated_count += 1
+        except Exception:
+            # Silently skip repos that can't be processed
+            pass
+    
+    if updated_count > 0:
+        print(f"Updated {updated_count} git remotes with current token")
 
 
 def due_run(cfg: Config):

@@ -62,7 +62,24 @@ def clone_if_missing(base_dir: str, folder: str, project_id: str, token: Optiona
         print(f"$ git clone {safe_url} {path}")
         rc, combined = _run_stream(["git", "clone", url, path], mask_token=token)
         if rc != 0:
-            raise RuntimeError(f"git clone failed: {combined.splitlines()[-1] if combined else 'unknown error'}")
+            error_msg = combined.splitlines()[-1] if combined else 'unknown error'
+            
+            # Check if this is a token/authentication error
+            if _is_token_error(combined):
+                raise RuntimeError(
+                    f"GIT CLONE FAILED - AUTHENTICATION ERROR\n\n"
+                    f"Error: {error_msg}\n\n"
+                    "Your Overleaf Git authentication token is OUTDATED or INVALID.\n\n"
+                    "How to fix:\n"
+                    "1. Get a new token from Overleaf account settings\n"
+                    "2. Run: overleaf-pull set-git-token\n"
+                    "3. The new token will be used for all future clones\n\n"
+                    "Alternative methods:\n"
+                    "  • overleaf-pull browser-login-qt (recommended if PySide6 is installed)\n"
+                    "  • overleaf-pull browser-login (manual cookie copy)"
+                )
+            
+            raise RuntimeError(f"git clone failed: {error_msg}")
     return path
 
 
@@ -87,6 +104,38 @@ def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> No
         _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=path)
 
 
+def _is_token_error(output: str) -> bool:
+    """Detect if output indicates a token/authentication error."""
+    output_lower = output.lower()
+    # Common indicators of token expiration or auth failure
+    token_error_phrases = [
+        "401",  # Unauthorized
+        "403",  # Forbidden
+        "fatal: authentication failed",
+        "authentication failed",
+        "fatal: credential approval",
+        "fatal: invalid credentials",
+        "fatal: http 401",
+        "fatal: http 403",
+        "fatal: 401",
+        "fatal: 403",
+        "fatal: bad credentials",
+    ]
+    for phrase in token_error_phrases:
+        if phrase in output_lower:
+            return True
+    
+    # Check for "could not read Username" (auth context)
+    if "could not read" in output_lower and "username" in output_lower:
+        return True
+    
+    # Also check for "access denied" which is a common auth error
+    if "access denied" in output_lower:
+        return True
+    
+    return False
+
+
 def detect_default_branch(path: str) -> str:
     # Try remote heads (quiet)
     res = _run(["git", "ls-remote", "--heads", REMOTE_NAME], cwd=path)
@@ -106,7 +155,24 @@ def pull_remote(path: str, branch: str) -> None:
     print(f"$ git pull {REMOTE_NAME} {branch}")
     rc, combined = _run_stream(["git", "pull", REMOTE_NAME, branch], cwd=path)
     if rc != 0:
-        raise RuntimeError(f"git pull failed: {combined.splitlines()[-1] if combined else 'unknown error'}")
+        error_msg = combined.splitlines()[-1] if combined else 'unknown error'
+        
+        # Check if this is a token/authentication error
+        if _is_token_error(combined):
+            raise RuntimeError(
+                f"GIT PULL FAILED - AUTHENTICATION ERROR\n\n"
+                f"Error: {error_msg}\n\n"
+                "Your Overleaf Git authentication token is OUTDATED or INVALID.\n\n"
+                "How to fix:\n"
+                "1. Get a new token from Overleaf account settings\n"
+                "2. Run: overleaf-pull set-git-token\n"
+                "3. The new token will be used for all future pulls\n\n"
+                "Alternative methods:\n"
+                "  • overleaf-pull browser-login-qt (recommended if PySide6 is installed)\n"
+                "  • overleaf-pull browser-login (manual cookie copy)"
+            )
+        
+        raise RuntimeError(f"git pull failed: {error_msg}")
 
 
 def get_remote_branch_head(path: str, branch: str) -> Optional[str]:
