@@ -1,7 +1,10 @@
 import asyncio
 import sys
 import time
+from datetime import datetime
 from typing import Optional
+
+from .config import get_logs_dir
 
 try:
     from desktop_notifier import DesktopNotifier
@@ -19,6 +22,19 @@ def _normalize_text(exc: Exception, context: str = "") -> str:
     return base.lower()
 
 
+def _now_stamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _append_app_log(line: str) -> None:
+    try:
+        logs_dir = get_logs_dir()
+        with open(f"{logs_dir}/app.log", "a", encoding="utf-8") as lf:
+            lf.write(line + "\n")
+    except Exception:
+        pass
+
+
 def _throttled(key: str, cooldown_sec: int = 900) -> bool:
     now = time.time()
     last = _LAST_SENT.get(key, 0.0)
@@ -30,6 +46,19 @@ def _throttled(key: str, cooldown_sec: int = 900) -> bool:
 
 def _contains_any(text: str, needles: list[str]) -> bool:
     return any(n in text for n in needles)
+
+
+def _action_title(context: str) -> str:
+    lowered_context = context.lower().strip()
+    if "pull" in lowered_context:
+        return "Overleaf Sync: Pull Failed"
+    if "clone" in lowered_context:
+        return "Overleaf Sync: Clone Failed"
+    if "prune" in lowered_context:
+        return "Overleaf Sync: Prune Failed"
+    if "list projects" in lowered_context:
+        return "Overleaf Sync: List Projects Failed"
+    return "Overleaf Sync: Failure"
 
 
 def _is_auth_failure(text: str) -> bool:
@@ -45,13 +74,10 @@ def _is_auth_failure(text: str) -> bool:
         "invalid token",
         "expired token",
         "access denied",
-        "permission denied",
         "overleaf_session2",
         "missing cookie",
         "cookie",
         "login failed",
-        "git clone failed",
-        "git pull failed",
         "please ensure that you are logged into overleaf in your browser and that your session is valid",
     ]
     return _contains_any(text, auth_needles)
@@ -72,27 +98,94 @@ def _is_api_compat_failure(text: str) -> bool:
     return _contains_any(text, api_needles)
 
 
+def _is_offline_failure(text: str) -> bool:
+    offline_needles = [
+        "no internet",
+        "no internet connectivity",
+        "network is unreachable",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "could not resolve host",
+        "failed to establish a new connection",
+        "connection timed out",
+        "timed out",
+        "connection refused",
+        "connectivity",
+        "offline",
+    ]
+    return _contains_any(text, offline_needles)
+
+
 def _failure_payload(exc: Exception, context: str = "") -> tuple[str, str, str]:
     text = _normalize_text(exc, context)
-    if _is_auth_failure(text):
+    if _is_offline_failure(text):
         return (
-            "Overleaf Sync: Authentication Failed",
-            "Your Overleaf token/cookies may be expired. Run set-git-token or browser-login-qt.",
-            "auth-failure",
+            "Overleaf Sync: Offline",
+            "no internet connection",
+            "offline-failure",
         )
-
     if _is_api_compat_failure(text):
         return (
             "Overleaf Sync: API Compatibility Issue",
-            "Overleaf or pyoverleaf API likely changed. Upgrade pyoverleaf and retry sync.",
+            "Overleaf or pyoverleaf API likely changed",
             "api-compat-failure",
         )
 
+    title = _action_title(context)
+    if _is_auth_failure(text):
+        return (
+            title,
+            "authentication/token issue",
+            "auth-failure",
+        )
+
+    if title == "Overleaf Sync: Pull Failed":
+        return (
+            title,
+            "git pull failed",
+            "git-pull-failure",
+        )
+    if title == "Overleaf Sync: Clone Failed":
+        return (
+            title,
+            "git clone failed",
+            "git-clone-failure",
+        )
+    if title == "Overleaf Sync: Prune Failed":
+        return (
+            title,
+            "could not safely remove an outdated repo",
+            "prune-failure",
+        )
+    if title == "Overleaf Sync: List Projects Failed":
+        return (
+            title,
+            "could not fetch project list",
+            "list-projects-failure",
+        )
+
     return (
-        "Overleaf Sync: Failure",
-        "A sync run failed. Check logs with overleaf-pull status for details.",
+        title,
+        "A sync run failed",
         "generic-sync-failure",
     )
+
+
+def _short_reason(exc: Exception, context: str = "") -> str:
+    text = _normalize_text(exc, context)
+    if _is_offline_failure(text):
+        return "no internet connection"
+    if _is_auth_failure(text):
+        return "authentication/token issue"
+    if _is_api_compat_failure(text):
+        return "API compatibility issue"
+    if "pull" in context.lower():
+        return "git pull failed"
+    if "clone" in context.lower():
+        return "git clone failed"
+    if "prune" in context.lower():
+        return "prune was unsafe"
+    return str(exc).strip() or type(exc).__name__
 
 
 def send_notification(title: str, message: str, key: Optional[str] = None) -> None:
@@ -129,12 +222,20 @@ def report_sync_failure(
     desktop: bool = False,
 ) -> None:
     title, message, key = _failure_payload(exc, context)
+    stamp = _now_stamp()
+    reason = _short_reason(exc, context)
+    details_text = _normalize_text(exc, context)
+    log_line = f"[{stamp}] {title}: {reason}"
+    if context:
+        log_line += f" | {context}"
+    log_line += f" | {details_text}"
+    _append_app_log(log_line)
     if cli:
         try:
-            details = _normalize_text(exc, context)
+            details = details_text
         except Exception:
             details = f"{type(exc).__name__}: {exc}"
-        print(f"{title}: {message}", file=sys.stderr)
+        print(f"[{stamp}] {title}: {message}", file=sys.stderr)
         print(f"Error Details: {details}", file=sys.stderr)
-    if desktop:
-        send_notification(title=title, message=message, key=key)
+    if desktop and key != "offline-failure":
+        send_notification(title=title, message=f"{stamp}: {message}", key=key)

@@ -15,6 +15,15 @@ def _tail(path: str, lines: int = 50) -> list[str]:
         return []
 
 
+def _log_ts(line: str):
+    try:
+        start = line.index("[") + 1
+        end = line.index("]", start)
+        return __import__("datetime").datetime.fromisoformat(line[start:end])
+    except Exception:
+        return None
+
+
 def cmd_status(args):
     # Sync health check: verify local repos match remote heads
     cfg = load_config() or prompt_first_run()
@@ -201,25 +210,29 @@ def cmd_status(args):
     print(f"Scheduler: interval={cfg.sync_interval}, mode={mode}")
     # Detect offline runner skip (from app.log)
     offline_msg = None
+    offline_ts = None
     if os.path.exists(app_log):
         lines = _tail(app_log, 50)
         for line in reversed(lines):
             line = line.strip()
             if "] Runner skipped (no internet)" in line:
                 offline_msg = line
+                offline_ts = _log_ts(line)
                 break
 
     # Detect last successful sync message (from app.log)
     last_success = None
+    last_success_ts = None
     if os.path.exists(app_log):
         lines = _tail(app_log, 200)
         for line in reversed(lines):
             line = line.strip()
             if line.startswith("[") and "] Synced" in line:
                 last_success = line
+                last_success_ts = _log_ts(line)
                 break
 
-    # Detect runner errors (from runner.err.log)
+    # Detect runner errors (prefer runner.err.log on macOS, fall back to app.log everywhere)
     error_msg = None
     if os.path.exists(runner_err):
         err_lines = _tail(runner_err, 200)
@@ -235,6 +248,18 @@ def cmd_status(args):
             ):
                 error_msg = s
                 break
+    if error_msg is None and os.path.exists(app_log):
+        app_lines = _tail(app_log, 200)
+        for line in reversed(app_lines):
+            s = line.strip()
+            if not s:
+                continue
+            if "status list projects" in s.lower():
+                continue
+            if s.startswith("[") and ("Overleaf Sync:" in s or "Runner skipped" in s):
+                if "Failed" in s or "Failure" in s or "ERROR" in s or "Error" in s:
+                    error_msg = s
+                    break
     
     # Compute next worker run time (approximate)
     next_run_str = None
@@ -260,7 +285,7 @@ def cmd_status(args):
     except Exception:
         is_stale = False
 
-    if error_msg and has_runner_logs:
+    if error_msg and (has_runner_logs or os.path.exists(app_log)):
         print(f"Background runner ERROR. {error_msg}")
         if last_run:
             try:
@@ -274,7 +299,9 @@ def cmd_status(args):
         print("Hint: reinstall the scheduler or fix Python environment for the runner.")
         if last_success:
             print(f"Last successful sync (worker): {last_success}")
-    elif offline_msg and has_runner_logs:
+    elif offline_msg and (has_runner_logs or os.path.exists(app_log)) and (
+        last_success_ts is None or offline_ts is None or offline_ts >= last_success_ts
+    ):
         print(f"Background runner STALE (offline). {offline_msg}")
         if last_run:
             try:
@@ -287,7 +314,7 @@ def cmd_status(args):
             print(f"Worker next run: {next_run_str} (approx)")
         if last_success:
             print(f"Last successful sync (worker): {last_success}")
-    elif is_stale and has_runner_logs:
+    elif is_stale and (has_runner_logs or os.path.exists(app_log)):
         print("Background runner STALE (missed schedule?).")
         if last_run:
             try:
@@ -300,7 +327,7 @@ def cmd_status(args):
             print(f"Worker next run: {next_run_str} (approx)")
         if last_success:
             print(f"Last successful sync (worker): {last_success}")
-    elif last_success and has_runner_logs:
+    elif last_success and (has_runner_logs or os.path.exists(app_log)):
         print(f"Background runner OK. {last_success}")
         if last_run:
             try:
@@ -314,7 +341,7 @@ def cmd_status(args):
     elif last_success:
         print(f"Manual sync OK. {last_success}")
     else:
-        if has_runner_logs:
+        if has_runner_logs or os.path.exists(app_log):
             print("Background runner NOT SUCCESSFUL yet (no successful sync recorded).")
             if last_run:
                 try:
