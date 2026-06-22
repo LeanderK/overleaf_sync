@@ -48,6 +48,7 @@ def run_sync(cfg: Config):
         enable_git_helper(platform.system())
 
     ensure_dir(cfg.base_dir)
+    _check_and_update_stale_tokens(cfg)
     # Prefer cookies from config if present
     if cfg.cookies:
         cookies = cfg.cookies
@@ -464,20 +465,17 @@ def run_sync_once_full(cfg: Config):
 
 
 def _check_and_update_stale_tokens(cfg: Config) -> None:
-    """Proactively check all existing repos for stale tokens and update them.
-    
-    This function walks through all local repos and checks if their git remote URL
-    contains a token that differs from the current configured token. If a mismatch
-    is detected, it updates the remote URL with the current token.
+    """Normalize existing Overleaf repos to one origin remote with the current token.
+
+    Older versions used an ``overleaf`` remote. If either remote points to
+    git.overleaf.com, keep/update ``origin`` and remove the legacy remote.
     """
     base_dir = cfg.base_dir
     if not os.path.isdir(base_dir):
         return
-    
-    # Regex to extract token from git URL (token is after "git:" and before "@")
-    token_pattern = re.compile(r'https://git:([^@]+)@git\.overleaf\.com/')
-    
+
     updated_count = 0
+    removed_count = 0
     for entry in os.listdir(base_dir):
         repo_path = os.path.join(base_dir, entry)
         git_dir = os.path.join(repo_path, ".git")
@@ -486,42 +484,61 @@ def _check_and_update_stale_tokens(cfg: Config) -> None:
             continue
         
         try:
-            # Get current remote URL
-            from .git_ops import _run, REMOTE_NAME
-            res = _run(["git", "remote", "get-url", REMOTE_NAME], cwd=repo_path)
-            if res.returncode != 0:
+            from .git_ops import LEGACY_REMOTE_NAME, REMOTE_NAME, _run
+
+            origin_res = _run(["git", "remote", "get-url", REMOTE_NAME], cwd=repo_path)
+            legacy_res = _run(["git", "remote", "get-url", LEGACY_REMOTE_NAME], cwd=repo_path)
+            origin_url = origin_res.stdout.strip() if origin_res.returncode == 0 else ""
+            legacy_url = legacy_res.stdout.strip() if legacy_res.returncode == 0 else ""
+
+            source_url = ""
+            if "git.overleaf.com/" in origin_url:
+                source_url = origin_url
+            elif "git.overleaf.com/" in legacy_url:
+                source_url = legacy_url
+
+            if not source_url:
                 continue
-            
-            current_url = res.stdout.strip()
-            if not current_url:
-                continue
-            
+
             # Extract project ID from URL
-            match = re.search(r'git\.overleaf\.com/([a-f0-9]+)', current_url)
+            match = re.search(r'git\.overleaf\.com/([a-f0-9]+)', source_url)
             if not match:
                 continue
-            
+
             project_id = match.group(1)
-            
-            # Check if current URL has a token
-            token_match = token_pattern.search(current_url)
-            current_token_in_url = token_match.group(1) if token_match else None
-            
+
             # Build target URL with current token
             target_url = build_remote_url(project_id, cfg.git_token)
-            
-            # If URL differs, update it
-            if current_url != target_url:
+
+            # If origin differs, update it. If origin is missing, create it.
+            if origin_url != target_url:
                 safe_url = target_url.replace(cfg.git_token, "***") if cfg.git_token else target_url
-                print(f"$ git remote set-url {REMOTE_NAME} {safe_url} (updating stale token)")
-                _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=repo_path)
+                if origin_url:
+                    print(f"$ git remote set-url {REMOTE_NAME} {safe_url} (updating Overleaf token)")
+                    _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=repo_path)
+                else:
+                    print(f"$ git remote add {REMOTE_NAME} {safe_url}")
+                    _run(["git", "remote", "add", REMOTE_NAME, target_url], cwd=repo_path)
                 updated_count += 1
+
+            if legacy_url:
+                print(f"$ git remote remove {LEGACY_REMOTE_NAME}")
+                _run(["git", "remote", "remove", LEGACY_REMOTE_NAME], cwd=repo_path)
+                removed_count += 1
+
+            branch_res = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)
+            branch = branch_res.stdout.strip() if branch_res.returncode == 0 else ""
+            if branch and branch != "HEAD":
+                _run(["git", "config", f"branch.{branch}.remote", REMOTE_NAME], cwd=repo_path)
+                _run(["git", "config", f"branch.{branch}.merge", f"refs/heads/{branch}"], cwd=repo_path)
         except Exception:
             # Silently skip repos that can't be processed
             pass
     
     if updated_count > 0:
         print(f"Updated {updated_count} git remotes with current token")
+    if removed_count > 0:
+        print(f"Removed {removed_count} legacy overleaf remotes")
 
 
 def due_run(cfg: Config):

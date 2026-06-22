@@ -2,7 +2,8 @@ import os
 import subprocess
 from typing import Optional
 
-REMOTE_NAME = "overleaf"
+REMOTE_NAME = "origin"
+LEGACY_REMOTE_NAME = "overleaf"
 REMOTE_URL_FMT = "https://git.overleaf.com/{id}"
 
 
@@ -92,6 +93,7 @@ def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> No
                 safe_url = target_url.replace(token, "***")
             print(f"$ git remote add {REMOTE_NAME} {safe_url}")
             _run(["git", "remote", "add", REMOTE_NAME, target_url], cwd=path)
+            remove_legacy_remote(path)
         return
     current = res.stdout.strip()
     if target_url and current != target_url:
@@ -100,6 +102,14 @@ def ensure_remote(path: str, project_id: str, token: Optional[str] = None) -> No
             safe_url = target_url.replace(token, "***")
         print(f"$ git remote set-url {REMOTE_NAME} {safe_url}")
         _run(["git", "remote", "set-url", REMOTE_NAME, target_url], cwd=path)
+    remove_legacy_remote(path)
+
+
+def remove_legacy_remote(path: str) -> None:
+    res = _run(["git", "remote", "get-url", LEGACY_REMOTE_NAME], cwd=path)
+    if res.returncode == 0:
+        print(f"$ git remote remove {LEGACY_REMOTE_NAME}")
+        _run(["git", "remote", "remove", LEGACY_REMOTE_NAME], cwd=path)
 
 
 def _is_token_error(output: str) -> bool:
@@ -205,11 +215,11 @@ def is_worktree_clean(path: str) -> bool:
 def has_unpushed_commits(path: str, branch: str) -> Optional[bool]:
     """Return True if local is ahead of remote for branch. None if cannot determine."""
     # Ensure the local remote-tracking ref exists before comparing heads.
-    # `git ls-remote` can succeed even when refs/remotes/overleaf/<branch> has never been fetched locally.
-    local_ref = f"refs/remotes/overleaf/{branch}"
+    # `git ls-remote` can succeed even when refs/remotes/<remote>/<branch> has never been fetched locally.
+    local_ref = f"refs/remotes/{REMOTE_NAME}/{branch}"
     ref_check = _run(["git", "rev-parse", "--verify", "--quiet", local_ref], cwd=path)
     if ref_check.returncode != 0:
-        fetch_cmd = ["git", "fetch", "--no-tags", "overleaf", f"refs/heads/{branch}:refs/remotes/overleaf/{branch}"]
+        fetch_cmd = ["git", "fetch", "--no-tags", REMOTE_NAME, f"refs/heads/{branch}:{local_ref}"]
         fetch_res = _run(fetch_cmd, cwd=path)
         if fetch_res.returncode != 0:
             return None

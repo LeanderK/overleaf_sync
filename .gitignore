@@ -22,3 +22,6 @@ dist/
 
 # VSCode settings
 .vscode/
+
+# Local agent notes
+AGENTS.md
