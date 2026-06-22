@@ -24,6 +24,14 @@ def _log_ts(line: str):
         return None
 
 
+def _is_success_line(line: str) -> bool:
+    return line.startswith("[") and ("] Synced" in line or "] Full refresh synced" in line)
+
+
+def _success_clears_error(last_success_ts, error_ts) -> bool:
+    return bool(last_success_ts and error_ts and last_success_ts >= error_ts)
+
+
 def cmd_status(args):
     # Sync health check: verify local repos match remote heads
     cfg = load_config() or prompt_first_run()
@@ -227,13 +235,14 @@ def cmd_status(args):
         lines = _tail(app_log, 200)
         for line in reversed(lines):
             line = line.strip()
-            if line.startswith("[") and "] Synced" in line:
+            if _is_success_line(line):
                 last_success = line
                 last_success_ts = _log_ts(line)
                 break
 
     # Detect runner errors (prefer runner.err.log on macOS, fall back to app.log everywhere)
     error_msg = None
+    error_ts = None
     if os.path.exists(runner_err):
         err_lines = _tail(runner_err, 200)
         for line in reversed(err_lines):
@@ -247,6 +256,10 @@ def cmd_status(args):
                 or "ModuleNotFoundError" in s
             ):
                 error_msg = s
+                try:
+                    error_ts = __import__("datetime").datetime.fromtimestamp(os.path.getmtime(runner_err))
+                except Exception:
+                    error_ts = None
                 break
     if error_msg is None and os.path.exists(app_log):
         app_lines = _tail(app_log, 200)
@@ -259,16 +272,28 @@ def cmd_status(args):
             if s.startswith("[") and ("Overleaf Sync:" in s or "Runner skipped" in s):
                 if "Failed" in s or "Failure" in s or "ERROR" in s or "Error" in s:
                     error_msg = s
+                    error_ts = _log_ts(s)
                     break
+
+    # A newer successful sync clears older runner/app-log errors for status display.
+    if error_msg and _success_clears_error(last_success_ts, error_ts):
+        error_msg = None
+        error_ts = None
+
+    effective_last_run = last_run
+    if last_success_ts:
+        success_epoch = last_success_ts.timestamp()
+        if effective_last_run is None or success_epoch > effective_last_run:
+            effective_last_run = success_epoch
     
     # Compute next worker run time (approximate)
     next_run_str = None
     try:
         interval_map = {"30m": 1800, "1h": 3600, "12h": 43200, "24h": 86400}
         iv = interval_map.get(cfg.sync_interval, 3600)
-        if last_run:
+        if effective_last_run:
             import datetime as _dt
-            nr = last_run + iv
+            nr = effective_last_run + iv
             next_run_str = _dt.datetime.fromtimestamp(nr).isoformat(timespec='seconds')
     except Exception:
         next_run_str = None
@@ -276,64 +301,64 @@ def cmd_status(args):
     # Determine staleness relative to interval
     is_stale = False
     try:
-        if last_run:
+        if effective_last_run:
             import time as _time
             interval_map = {"30m": 1800, "1h": 3600, "12h": 43200, "24h": 86400}
             iv = interval_map.get(cfg.sync_interval, 3600)
             # Consider stale if last run is older than 1.5x interval
-            is_stale = (_time.time() - last_run) > (iv * 1.5)
+            is_stale = (_time.time() - effective_last_run) > (iv * 1.5)
     except Exception:
         is_stale = False
 
     if error_msg and (has_runner_logs or os.path.exists(app_log)):
         print(f"Background runner ERROR. {error_msg}")
-        if last_run:
+        if effective_last_run:
             try:
                 import datetime as _dt
-                ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
-                print(f"Last worker activity: {ts}")
+                ts = _dt.datetime.fromtimestamp(effective_last_run).isoformat(timespec='seconds')
+                print(f"Last sync activity: {ts}")
             except Exception:
                 pass
         if next_run_str:
             print(f"Worker next run: {next_run_str} (approx)")
         print("Hint: reinstall the scheduler or fix Python environment for the runner.")
         if last_success:
-            print(f"Last successful sync (worker): {last_success}")
+            print(f"Last successful sync: {last_success}")
     elif offline_msg and (has_runner_logs or os.path.exists(app_log)) and (
         last_success_ts is None or offline_ts is None or offline_ts >= last_success_ts
     ):
         print(f"Background runner STALE (offline). {offline_msg}")
-        if last_run:
+        if effective_last_run:
             try:
                 import datetime as _dt
-                ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
-                print(f"Last worker activity: {ts}")
+                ts = _dt.datetime.fromtimestamp(effective_last_run).isoformat(timespec='seconds')
+                print(f"Last sync activity: {ts}")
             except Exception:
                 pass
         if next_run_str:
             print(f"Worker next run: {next_run_str} (approx)")
         if last_success:
-            print(f"Last successful sync (worker): {last_success}")
+            print(f"Last successful sync: {last_success}")
     elif is_stale and (has_runner_logs or os.path.exists(app_log)):
         print("Background runner STALE (missed schedule?).")
-        if last_run:
+        if effective_last_run:
             try:
                 import datetime as _dt
-                ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
-                print(f"Last worker activity: {ts}")
+                ts = _dt.datetime.fromtimestamp(effective_last_run).isoformat(timespec='seconds')
+                print(f"Last sync activity: {ts}")
             except Exception:
                 pass
         if next_run_str:
             print(f"Worker next run: {next_run_str} (approx)")
         if last_success:
-            print(f"Last successful sync (worker): {last_success}")
+            print(f"Last successful sync: {last_success}")
     elif last_success and (has_runner_logs or os.path.exists(app_log)):
         print(f"Background runner OK. {last_success}")
-        if last_run:
+        if effective_last_run:
             try:
                 import datetime as _dt
-                ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
-                print(f"Last worker activity: {ts}")
+                ts = _dt.datetime.fromtimestamp(effective_last_run).isoformat(timespec='seconds')
+                print(f"Last sync activity: {ts}")
             except Exception:
                 pass
         if next_run_str:
@@ -343,17 +368,17 @@ def cmd_status(args):
     else:
         if has_runner_logs or os.path.exists(app_log):
             print("Background runner NOT SUCCESSFUL yet (no successful sync recorded).")
-            if last_run:
+            if effective_last_run:
                 try:
                     import datetime as _dt
-                    ts = _dt.datetime.fromtimestamp(last_run).isoformat(timespec='seconds')
-                    print(f"Last worker activity: {ts}")
+                    ts = _dt.datetime.fromtimestamp(effective_last_run).isoformat(timespec='seconds')
+                    print(f"Last sync activity: {ts}")
                 except Exception:
                     pass
             if next_run_str:
                 print(f"Worker next run: {next_run_str} (approx)")
             if last_success:
-                print(f"Last successful sync (worker): {last_success}")
+                print(f"Last successful sync: {last_success}")
         else:
             print("Everything OK. No background runs recorded yet.")
 
