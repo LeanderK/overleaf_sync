@@ -1,6 +1,6 @@
 [project]
 name = "overleaf-pull"
-version = "0.6.10"
+version = "0.6.11"
 description = "Pull-only Overleaf project sync using PyOverleaf"
 authors = [{ name = "Leander Kurscheidt" }]
 readme = "README.md"
@@ -15,8 +15,8 @@ classifiers = [
   "Environment :: Console",
 ]
 dependencies = [
-  "pyoverleaf>=0.1.7",
-  "browsercookie>=0.7",
+  "pyoverleaf>=0.1.8",
+  "browser-cookie3>=0.20.1",
   "psutil>=5.9.0",
   "desktop-notifier>=5.0.1",
 ]

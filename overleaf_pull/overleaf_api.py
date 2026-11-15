@@ -1,5 +1,13 @@
 from typing import List, Dict, Any
 
+
+def _is_auth_failure(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) in (401, 403):
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in ("401", "403", "unauthorized", "forbidden"))
+
 # Attempt to import PyOverleaf Api with flexibility (module paths may vary)
 try:
     from pyoverleaf.api import Api  # type: ignore
@@ -16,10 +24,31 @@ def create_api(host: str = "www.overleaf.com"):
     return Api(host=host)
 
 
-def list_projects_sorted_by_last_updated(api, cookies: Dict[str, str], limit: int) -> List[Dict[str, Any]]:
+def list_projects_sorted_by_last_updated(
+    api,
+    cookies: Dict[str, str],
+    limit: int,
+    *,
+    fallback_cookies=None,
+    on_cookie_refresh=None,
+) -> List[Dict[str, Any]]:
     """Login with cookies and list projects, sorted by lastUpdated descending, limited to 'limit'."""
     api.login_from_cookies(cookies)
-    projects = api.get_projects()
+    try:
+        projects = api.get_projects()
+    except Exception as exc:
+        if fallback_cookies is None or not _is_auth_failure(exc):
+            raise
+        try:
+            cookies = fallback_cookies()
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                "Saved Overleaf cookie was rejected and Firefox cookies could not be loaded."
+            ) from fallback_exc
+        api.login_from_cookies(cookies)
+        projects = api.get_projects()
+        if on_cookie_refresh is not None:
+            on_cookie_refresh(cookies)
     # Each project likely has attributes: id, name, lastUpdated
     def last_updated(p):
         # p may be a dict or an object; support both

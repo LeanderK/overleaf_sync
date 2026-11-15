@@ -4,6 +4,7 @@ import concurrent.futures
 
 from .config import load_config, prompt_first_run, get_logs_dir
 from .notifier import report_sync_failure
+from .cookies import load_overleaf_cookies, save_refreshed_cookies
 
 
 def _tail(path: str, lines: int = 50) -> list[str]:
@@ -41,12 +42,19 @@ def cmd_status(args):
     # Gather projects
     cookies = cfg.cookies if cfg.cookies else None
     if not cookies:
-        from .cookies import load_overleaf_cookies
         cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
     try:
         from .overleaf_api import create_api, list_projects_sorted_by_last_updated
         api = create_api(cfg.host)
-        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+        refresh_options = {}
+        if cfg.cookies and cfg.browser == "firefox":
+            refresh_options = {
+                "fallback_cookies": lambda: load_overleaf_cookies("firefox", cfg.profile),
+                "on_cookie_refresh": lambda refreshed: save_refreshed_cookies(cfg, refreshed),
+            }
+        projects = list_projects_sorted_by_last_updated(
+            api, cookies, cfg.count, **refresh_options
+        )
     except Exception as e:
         report_sync_failure(e, context="status list projects", cli=True, desktop=False)
         sys.exit(1)

@@ -4,7 +4,7 @@ import socket
 import re
 from datetime import datetime
 from .config import load_config, prompt_first_run, Config, get_logs_dir, load_schedule_state, save_schedule_state
-from .cookies import load_overleaf_cookies
+from .cookies import load_overleaf_cookies, save_refreshed_cookies
 from .overleaf_api import create_api, list_projects_sorted_by_last_updated
 from .projects import folder_name_for, ensure_dir
 from .notifier import report_sync_failure
@@ -40,6 +40,15 @@ def is_plugged_in() -> bool:
         return True  # Assume plugged in if detection fails
 
 
+def _cookie_refresh_options(cfg):
+    if not cfg.cookies or cfg.browser != "firefox":
+        return {}
+    return {
+        "fallback_cookies": lambda: load_overleaf_cookies("firefox", cfg.profile),
+        "on_cookie_refresh": lambda cookies: save_refreshed_cookies(cfg, cookies),
+    }
+
+
 def run_sync(cfg: Config):
     # Require Git token for all sync operations to ensure non-interactive background runs
     if not cfg.git_token:
@@ -57,7 +66,9 @@ def run_sync(cfg: Config):
     api = create_api(cfg.host)
 
     try:
-        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+        projects = list_projects_sorted_by_last_updated(
+            api, cookies, cfg.count, **_cookie_refresh_options(cfg)
+        )
     except Exception as e:
         report_sync_failure(e, context="list projects", cli=True, desktop=True)
         raise
@@ -258,7 +269,9 @@ def run_sync_validate_first(cfg: Config):
         cookies = load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
     try:
-        projects = list_projects_sorted_by_last_updated(api, cookies, 1)
+        projects = list_projects_sorted_by_last_updated(
+            api, cookies, 1, **_cookie_refresh_options(cfg)
+        )
     except Exception as e:
         report_sync_failure(e, context="validation list projects", cli=True, desktop=False)
         raise
@@ -314,7 +327,9 @@ def run_sync_once_full(cfg: Config):
     api = create_api(cfg.host)
 
     try:
-        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+        projects = list_projects_sorted_by_last_updated(
+            api, cookies, cfg.count, **_cookie_refresh_options(cfg)
+        )
     except Exception as e:
         report_sync_failure(e, context="list projects", cli=True, desktop=True)
         raise
@@ -590,7 +605,9 @@ def due_run(cfg: Config):
     cookies = cfg.cookies if cfg.cookies else load_overleaf_cookies(cfg.browser, cfg.profile)
     api = create_api(cfg.host)
     try:
-        projects = list_projects_sorted_by_last_updated(api, cookies, cfg.count)
+        projects = list_projects_sorted_by_last_updated(
+            api, cookies, cfg.count, **_cookie_refresh_options(cfg)
+        )
     except Exception as e:
         report_sync_failure(e, context="dynamic list projects", cli=True, desktop=True)
         raise
