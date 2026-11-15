@@ -6,7 +6,19 @@ def _is_auth_failure(exc: Exception) -> bool:
     if getattr(response, "status_code", None) in (401, 403):
         return True
     text = str(exc).lower()
-    return any(marker in text for marker in ("401", "403", "unauthorized", "forbidden"))
+    return any(
+        marker in text
+        for marker in (
+            "401",
+            "403",
+            "unauthorized",
+            "forbidden",
+            "failed to fetch projects",
+            "failed to fetch tags",
+            "logged into overleaf",
+            "session is valid",
+        )
+    )
 
 # Attempt to import PyOverleaf Api with flexibility (module paths may vary)
 try:
