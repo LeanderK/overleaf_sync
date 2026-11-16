@@ -61,6 +61,13 @@ def _action_title(context: str) -> str:
     return "Overleaf Sync: Failure"
 
 
+def _prune_target(context: str) -> str:
+    for marker in ("prune evaluate ", "prune candidate "):
+        if marker in context.lower():
+            return context[context.lower().index(marker) + len(marker):].strip()
+    return "unknown repository"
+
+
 def _is_auth_failure(text: str) -> bool:
     auth_needles = [
         "authentication failed",
@@ -154,7 +161,7 @@ def _failure_payload(exc: Exception, context: str = "") -> tuple[str, str, str]:
     if title == "Overleaf Sync: Prune Failed":
         return (
             title,
-            "could not safely remove an outdated repo",
+            f"could not safely remove outdated repo '{_prune_target(context)}'",
             "prune-failure",
         )
     if title == "Overleaf Sync: List Projects Failed":
