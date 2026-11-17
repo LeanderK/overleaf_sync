@@ -123,6 +123,18 @@ def _is_offline_failure(text: str) -> bool:
     return _contains_any(text, offline_needles)
 
 
+def _is_overleaf_outage_failure(text: str) -> bool:
+    outage_needles = [
+        "http 503",
+        "error: 503",
+        "error 503",
+        " 503",
+        "service unavailable",
+        "no healthy upstream",
+    ]
+    return _contains_any(text, outage_needles)
+
+
 def _failure_payload(exc: Exception, context: str = "") -> tuple[str, str, str]:
     text = _normalize_text(exc, context)
     if _is_offline_failure(text):
@@ -130,6 +142,12 @@ def _failure_payload(exc: Exception, context: str = "") -> tuple[str, str, str]:
             "Overleaf Sync: Offline",
             "no internet connection",
             "offline-failure",
+        )
+    if _is_overleaf_outage_failure(text):
+        return (
+            _action_title(context),
+            "probable Overleaf-side outage (HTTP 503)",
+            "overleaf-outage",
         )
     if _is_api_compat_failure(text):
         return (
@@ -182,6 +200,8 @@ def _short_reason(exc: Exception, context: str = "") -> str:
     text = _normalize_text(exc, context)
     if _is_offline_failure(text):
         return "no internet connection"
+    if _is_overleaf_outage_failure(text):
+        return "probable Overleaf-side outage (HTTP 503)"
     if _is_auth_failure(text):
         return "authentication/token issue"
     if _is_api_compat_failure(text):
